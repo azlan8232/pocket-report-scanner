@@ -11,6 +11,7 @@ const WARP_RANGE = [0.04, 0.07]; // corner movement as a share of page width
 const SHADOW = { average: 0.25, poor: 0.4 }; // darkening at the far side
 const POOR_WIDTH = 900;
 const BLUR_SIGMA = 1.2;
+const FAIR = { width: 1400, blur: 0.8, noise: 6 };
 const BACKGROUND = 90;
 
 function mulberry32(seed) {
@@ -132,22 +133,28 @@ function addShadow(canvas, strength, angle) {
   ctx.putImageData(image, 0, 0);
 }
 
-function downscaleAndBlur(cv, canvas) {
-  const scale = POOR_WIDTH / canvas.width;
+// Per-channel Gaussian pixel noise (Box-Muller), clamped by the canvas.
+function addNoise(canvas, sigma, rand) {
+  const ctx = canvas.getContext('2d');
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = image.data;
+  for (let i = 0; i < d.length; i += 4)
+    for (let c = 0; c < 3; c++) {
+      const g = Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+      d[i + c] = Math.max(0, Math.min(255, Math.round(d[i + c] + g * sigma)));
+    }
+  ctx.putImageData(image, 0, 0);
+}
+
+function downscaleAndBlur(cv, canvas, width = POOR_WIDTH, sigma = BLUR_SIGMA) {
+  const scale = width / canvas.width;
   const src = cv.matFromImageData(
     canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height),
   );
   const small = new cv.Mat();
-  cv.resize(
-    src,
-    small,
-    new cv.Size(POOR_WIDTH, Math.round(canvas.height * scale)),
-    0,
-    0,
-    cv.INTER_AREA,
-  );
+  cv.resize(src, small, new cv.Size(width, Math.round(canvas.height * scale)), 0, 0, cv.INTER_AREA);
   const blurred = new cv.Mat();
-  cv.GaussianBlur(small, blurred, new cv.Size(0, 0), BLUR_SIGMA, BLUR_SIGMA, cv.BORDER_DEFAULT);
+  cv.GaussianBlur(small, blurred, new cv.Size(0, 0), sigma, sigma, cv.BORDER_DEFAULT);
   const out = matToCanvas(cv, blurred);
   for (const mat of [src, small, blurred]) mat.delete();
   return { canvas: out, scale };
@@ -177,6 +184,11 @@ async function main() {
     addShadow(average, SHADOW.average, angle);
     fs.writeFileSync(path.join(imgDir, `${name}-average.jpg`), average.toBuffer('image/jpeg', 80));
 
+    // Fair has its own PRNG stream so the other conditions stay byte-identical.
+    const fair = downscaleAndBlur(cv, average, FAIR.width, FAIR.blur);
+    addNoise(fair.canvas, FAIR.noise, mulberry32(5000 + Number(name.slice(1))));
+    fs.writeFileSync(path.join(imgDir, `${name}-fair.jpg`), fair.canvas.toBuffer('image/jpeg', 75));
+
     const poorShadow = createCanvas(warped.canvas.width, warped.canvas.height);
     poorShadow.getContext('2d').drawImage(warped.canvas, 0, 0);
     addShadow(poorShadow, SHADOW.poor, angle);
@@ -186,6 +198,11 @@ async function main() {
     const round = (c) => c.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
     corners[name] = {
       average: { width: average.width, height: average.height, corners: round(warped.corners) },
+      fair: {
+        width: fair.canvas.width,
+        height: fair.canvas.height,
+        corners: round(warped.corners.map(([x, y]) => [x * fair.scale, y * fair.scale])),
+      },
       poor: {
         width: poor.canvas.width,
         height: poor.canvas.height,

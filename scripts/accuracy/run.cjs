@@ -81,8 +81,9 @@ function listImages(limit) {
   return found.filter((i) => ids.includes(i.id));
 }
 
+const CONDITIONS = ['good', 'average', 'fair', 'poor', 'phone'];
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
-const pct = (x) => (x * 100).toFixed(1) + '%';
+const pct = (x) => (x * 100).toFixed(2) + '%';
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -114,12 +115,15 @@ async function main() {
           `${engineName} ${variantName} ${img.id}-${img.condition} CER ${pct(cer(ref, hyp))} ${seconds.toFixed(1)}s`,
         );
       }
-      for (const [condition, s] of Object.entries(scores))
+      for (const [condition, s] of Object.entries(scores).sort(
+        (a, b) => CONDITIONS.indexOf(a[0]) - CONDITIONS.indexOf(b[0]),
+      ))
         rows.push({
           engineName,
           variantName,
           condition,
           n: s.length,
+          worst: Math.max(...s.map((x) => x.cer)),
           ...Object.fromEntries(
             ['cer', 'wer', 'num', 'seconds'].map((k) => [k, mean(s.map((x) => x[k]))]),
           ),
@@ -132,11 +136,11 @@ async function main() {
     '',
     `Generated ${new Date().toISOString().slice(0, 10)} with ${versions.join(', ')}. ${images.length} images from ${new Set(images.map((i) => i.id)).size} fictional reports. Lower CER and WER are better; number accuracy is higher-is-better.`,
     '',
-    '| Engine | Variant | Condition | Images | Mean CER | Mean WER | Number accuracy | Seconds/page |',
-    '|---|---|---|---|---|---|---|---|',
+    '| Engine | Variant | Condition | Images | Mean CER | Worst CER | Mean WER | Number accuracy | Seconds/page |',
+    '|---|---|---|---|---|---|---|---|---|',
     ...rows.map(
       (r) =>
-        `| ${r.engineName} | ${r.variantName} | ${r.condition} | ${r.n} | ${pct(r.cer)} | ${pct(r.wer)} | ${pct(r.num)} | ${r.seconds.toFixed(1)} |`,
+        `| ${r.engineName} | ${r.variantName} | ${r.condition} | ${r.n} | ${pct(r.cer)} | ${pct(r.worst)} | ${pct(r.wer)} | ${pct(r.num)} | ${r.seconds.toFixed(1)} |`,
     ),
     '',
   ];
