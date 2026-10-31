@@ -9,6 +9,7 @@ const {
   createPaddleWorkerEngine,
   servePaddleWorker,
   PADDLE_LOAD_TIMEOUT_MS,
+  PADDLE_WORKER_WATCHDOG_MS,
 } = require('../dist/engine-paddle.js');
 
 // Words get a slice of the line box proportional to their character count.
@@ -198,6 +199,50 @@ assert.equal(mapPaddleLines([], groupLinesIntoParagraphs).confidence, 0);
     },
   });
   await assert.rejects(broken.recognise(white), /worker failed: importScripts failed/);
+
+  // A worker that goes silent (hung, or killed for memory) is stopped by the watchdog;
+  // progress messages keep a slow job alive.
+  assert.equal(PADDLE_WORKER_WATCHDOG_MS, 90000);
+  const silentWorker = {
+    terminated: 0,
+    postMessage() {},
+    terminate: () => silentWorker.terminated++,
+  };
+  const silent = createPaddleWorkerEngine({
+    workerUrl: 'paddle-worker.js',
+    createWorker: () => silentWorker,
+    watchdogMs: 30,
+  });
+  await assert.rejects(silent.recognise(white), /PaddleOCR worker stopped responding/);
+  assert.equal(silentWorker.terminated, 1);
+  const slowWorker = {
+    terminate() {},
+    postMessage({ id }) {
+      // Progress every 15 ms for 90 ms, longer than the 30 ms watchdog, then the result.
+      let n = 0;
+      const timer = setInterval(() => {
+        if (++n < 6) return slowWorker.onmessage({ data: { id, type: 'progress', progress: {} } });
+        clearInterval(timer);
+        slowWorker.onmessage({ data: { id, type: 'result', result: { confidence: 0.5 } } });
+      }, 15);
+    },
+  };
+  const slow = createPaddleWorkerEngine({
+    workerUrl: 'paddle-worker.js',
+    createWorker: () => slowWorker,
+    watchdogMs: 30,
+  });
+  assert.equal((await slow.recognise(white)).confidence, 0.5);
+
+  // A reply that cannot be deserialised rejects the pending call and stops the worker.
+  const garbledWorker = { terminated: 0, terminate: () => garbledWorker.terminated++ };
+  garbledWorker.postMessage = () => setImmediate(() => garbledWorker.onmessageerror({}));
+  const garbled = createPaddleWorkerEngine({
+    workerUrl: 'paddle-worker.js',
+    createWorker: () => garbledWorker,
+  });
+  await assert.rejects(garbled.recognise(white), /could not be read/);
+  assert.equal(garbledWorker.terminated, 1);
 
   console.log('paddle engine tests passed');
 })().catch((err) => {

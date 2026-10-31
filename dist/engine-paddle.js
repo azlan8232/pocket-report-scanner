@@ -94,6 +94,10 @@
   // reports an error (so the app falls back to Tesseract) instead of hanging.
   const PADDLE_LOAD_TIMEOUT_MS = 60000;
 
+  // The page gives up on the PaddleOCR worker if it sends no message at all (progress
+  // included) for this long while a job is waiting, so a hung or killed worker falls back.
+  const PADDLE_WORKER_WATCHDOG_MS = 90000;
+
   function withTimeout(promise, ms, message) {
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -217,23 +221,45 @@
   /* Main-thread side with the same engine shape: loading, detection, recognition and all
      image work run in a dedicated worker (workerUrl), so the page keeps painting. Only
      reading the canvas pixels happens on the calling thread. terminate() ends the worker,
-     which frees all of its memory. */
+     which frees all of its memory. If the worker sends nothing (not even progress) for
+     watchdogMs while a job is waiting, it is treated as hung or killed and stopped. */
   function createPaddleWorkerEngine({
     workerUrl,
     onProgress,
     createWorker = (url) => new Worker(url),
+    watchdogMs = PADDLE_WORKER_WATCHDOG_MS,
   }) {
     let worker = null;
     let nextId = 0;
+    let watchdog = null;
     const pending = new Map();
     function failAll(error) {
+      clearTimeout(watchdog);
       for (const { reject } of pending.values()) reject(error);
       pending.clear();
+    }
+    // Stop the worker and reject every waiting call; the next call starts a new worker.
+    function abandon(error) {
+      const failed = worker;
+      worker = null;
+      if (failed) failed.terminate();
+      failAll(error);
+    }
+    function armWatchdog() {
+      clearTimeout(watchdog);
+      if (pending.size)
+        watchdog = setTimeout(
+          () => abandon(new Error('PaddleOCR worker stopped responding')),
+          watchdogMs,
+        );
     }
     function ensureWorker() {
       if (worker) return worker;
       worker = createWorker(workerUrl);
+      worker.onmessageerror = () =>
+        abandon(new Error('A PaddleOCR worker reply could not be read'));
       worker.onmessage = (event) => {
+        armWatchdog();
         const message = event.data;
         const entry = pending.get(message.id);
         if (!entry) return;
@@ -242,15 +268,13 @@
           return;
         }
         pending.delete(message.id);
+        armWatchdog(); // stops it when nothing is left waiting
         if (message.type === 'result') entry.resolve(message.result);
         else entry.reject(new Error(message.message));
       };
       worker.onerror = (event) => {
         if (event && event.preventDefault) event.preventDefault();
-        const failed = worker;
-        worker = null;
-        failed.terminate();
-        failAll(new Error('PaddleOCR worker failed: ' + ((event && event.message) || 'error')));
+        abandon(new Error('PaddleOCR worker failed: ' + ((event && event.message) || 'error')));
       };
       return worker;
     }
@@ -263,12 +287,11 @@
           const id = ++nextId;
           pending.set(id, { resolve, reject });
           ensureWorker().postMessage({ id, type: 'recognise', pixels }, [pixels.data.buffer]);
+          armWatchdog();
         });
       },
       async terminate() {
-        if (worker) worker.terminate();
-        worker = null;
-        failAll(new Error('PaddleOCR was stopped'));
+        abandon(new Error('PaddleOCR was stopped'));
       },
     };
   }
@@ -281,6 +304,7 @@
     splitLine,
     PADDLE_VERSION,
     PADDLE_LOAD_TIMEOUT_MS,
+    PADDLE_WORKER_WATCHDOG_MS,
   };
   Object.assign(root, api);
   if (typeof module !== 'undefined') module.exports = api;
