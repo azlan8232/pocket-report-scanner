@@ -26,6 +26,14 @@ function updateSelectionPreview() {
   $('selectionPreview').src = thumb.toDataURL('image/png');
   $('selectionInfo').textContent =
     `${selected.width} × ${selected.height} source pixels · outside text is excluded`;
+  // A warning only, never a block: it describes the selected region and extraction stays available.
+  const warnings = qualityWarnings({
+    width: selected.width,
+    height: selected.height,
+    sharpness: sharpnessScore(selected),
+  });
+  $('photoWarning').textContent = warnings.join(' ');
+  $('photoWarning').hidden = !warnings.length;
 }
 const status = (msg, error = false) => {
   $('status').textContent = msg;
@@ -67,14 +75,6 @@ function showCanvas() {
   resetCrop();
   $('quality').textContent =
     'Use a flat, sharp photo. Read one section at a time if the report has very small print.';
-  // A warning only, never a block: extraction stays available.
-  const warnings = qualityWarnings({
-    width: canvas.width,
-    height: canvas.height,
-    sharpness: sharpnessScore(canvas),
-  });
-  $('photoWarning').textContent = warnings.join(' ');
-  $('photoWarning').hidden = !warnings.length;
 }
 function resetResult() {
   $('uncertain').hidden = true;

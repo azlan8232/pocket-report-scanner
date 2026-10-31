@@ -1,21 +1,24 @@
 /* Local photo preparation. No recognition or medical-word substitutions here. */
 (function (root) {
   'use strict';
-  const BACKGROUND_SCALE = 16; // the background estimate is the image at 1/16 size, scaled back up
+  // The background estimate is the image at 1/8 size, scaled back up. 1/16 and 1/64 scored worse
+  // on the poor fixtures (see tests/accuracy-report.md and the task 5 report).
+  const BACKGROUND_SCALE = 8;
   const SHARPNESS_WIDTH = 1000; // sharpness is measured on at most this many pixels across
   const MIN_SHORT_SIDE = 1500;
-  // Midpoint of the median Laplacian-variance scores of the good (1220) and poor (10.6) fixtures.
-  const SHARPNESS_MIN = 615;
+  // Midpoint of the median Laplacian-variance scores of the fair (162.5) and poor (10.6) fixtures.
+  // Fair photos read well (0.28% CER on PaddleOCR), so only poorer ones are warned about.
+  const SHARPNESS_MIN = 87;
   const luma = (d, i) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
 
   // Divides out uneven lighting: each pixel becomes gray / background, where the background
   // is a heavily smoothed copy of the image. Text stays dark; shadowed paper becomes even.
-  function normaliseBackground(source, make) {
+  function normaliseBackground(source, make, scale = BACKGROUND_SCALE) {
     const w = source.width,
       h = source.height;
     const small = make();
-    small.width = Math.max(1, Math.round(w / BACKGROUND_SCALE));
-    small.height = Math.max(1, Math.round(h / BACKGROUND_SCALE));
+    small.width = Math.max(1, Math.round(w / scale));
+    small.height = Math.max(1, Math.round(h / scale));
     const sctx = small.getContext('2d');
     sctx.imageSmoothingEnabled = true;
     sctx.imageSmoothingQuality = 'high';
@@ -106,6 +109,8 @@
     if (mode === 'original') return input;
     if (background) ctx.drawImage(normaliseBackground(input, make), 0, 0);
     // Luminance contrast: suppress grey paper without hard thresholding faint characters.
+    // Skipped after background normalisation, which already sets the white point; stretching
+    // again thickened blurred strokes (poor CER 45.7% -> 63.0% on PaddleOCR).
     const pixels = ctx.getImageData(0, 0, w, h),
       d = pixels.data,
       hist = new Uint32Array(256);
@@ -130,7 +135,7 @@
         break;
       }
     }
-    if (high - low > 30) {
+    if (!background && high - low > 30) {
       for (let i = 0; i < d.length; i += 4) {
         const v = Math.max(
           0,
