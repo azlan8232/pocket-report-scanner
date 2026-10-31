@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node scripts/vendor-ocr.cjs",
-    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs",
+    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs && node tests/engine.cjs",
     "format": "prettier --write dist/*.js tests/*.cjs scripts/*.cjs"
   },
   "devDependencies": {

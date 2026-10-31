@@ -1,7 +1,7 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 let canvas = null,
-  worker = null,
+  engine = null,
   busy = false,
   run = 0;
 const crop = { left: 0, top: 0, right: 100, bottom: 100 };
@@ -190,14 +190,15 @@ $('extract').onclick = async () => {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const mode = $('scanMode').value;
     prepared = preparePhoto(canvas, { mode, crop });
-    if (!worker)
-      worker = await Tesseract.createWorker('eng', 1, {
-        workerPath: new URL('vendor/worker.min.js', location.href).href,
-        corePath: new URL('vendor/core/', location.href).href,
-        langPath: new URL('vendor/lang/', location.href).href.replace(/\/$/, ''),
-        workerBlobURL: false,
-        cacheMethod: 'none',
-        logger: (m) => {
+    if (!engine)
+      engine = createTesseractEngine({
+        Tesseract,
+        paths: {
+          workerPath: new URL('vendor/worker.min.js', location.href).href,
+          corePath: new URL('vendor/core/', location.href).href,
+          langPath: new URL('vendor/lang/', location.href).href.replace(/\/$/, ''),
+        },
+        onProgress: (m) => {
           if (token !== run) return;
           const p = Number.isFinite(m.progress) ? Math.round(m.progress * 100) : 0;
           $('progress').value = m.progress || 0;
@@ -208,21 +209,11 @@ $('extract').onclick = async () => {
           );
         },
       });
-    await worker.setParameters({
-      tessedit_pageseg_mode: mode === 'photo' ? '3' : '6',
-      user_defined_dpi: '300',
-    });
-    const { data } = await worker.recognize(
-      prepared,
-      { rotateAuto: mode !== 'original' },
-      { text: true, blocks: true },
-    );
+    const result = await engine.recognise(prepared, { mode });
     if (token !== run) return;
-    $('text').value = data.text.trim();
-    const words = (data.blocks || []).flatMap((b) =>
-      (b.paragraphs || []).flatMap((p) => (p.lines || []).flatMap((l) => l.words || [])),
-    );
-    const uncertain = words.filter((w) => w.confidence < 70 && w.text.trim());
+    const { text, spans } = composeText(result);
+    $('text').value = text.trim();
+    const uncertain = spans.filter((s) => s.confidence < 0.7 && s.text.trim());
     if (uncertain.length) {
       $('uncertain').hidden = false;
       $('uncertainSummary').textContent =
@@ -230,21 +221,22 @@ $('extract').onclick = async () => {
       $('uncertainWords').textContent =
         uncertain
           .slice(0, 100)
-          .map((w) => w.text)
+          .map((s) => s.text)
           .join(' · ') + (uncertain.length > 100 ? ' · …' : '');
     }
+    const confidence = Math.round(result.confidence * 100);
     status(
-      data.text.trim()
-        ? `Extraction complete · OCR confidence ${Math.round(data.confidence)}% (not accuracy). ${data.confidence < 80 ? 'Low confidence: retake a closer photo or crop to one section. ' : ''}Check every line against the original.`
+      text.trim()
+        ? `Extraction complete · OCR confidence ${confidence}% (not accuracy). ${confidence < 80 ? 'Low confidence: retake a closer photo or crop to one section. ' : ''}Check every line against the original.`
         : 'No text detected. Try a closer, sharper photograph or a different reading mode.',
-      !data.text.trim(),
+      !text.trim(),
     );
   } catch (e) {
-    if (worker) {
+    if (engine) {
       try {
-        await worker.terminate();
+        await engine.terminate();
       } catch (_) {}
-      worker = null;
+      engine = null;
     }
     status(
       'Could not complete OCR. Try a smaller crop. If offline, reconnect and refresh offline files first.',

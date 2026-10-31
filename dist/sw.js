@@ -6,6 +6,7 @@ const assets = [
   'style.css',
   'app.js',
   'prepare.js',
+  'engine.js',
   'crop-editor.js',
   'icon.svg',
   'manifest.json',
