@@ -1,0 +1,6 @@
+# Pocket Report Scanner continuation
+Private standalone Site appgprj_6ae3c9a2276481918de722ae547c7a23. Buildless app under dist, vendored Tesseract.js 6.0.1. No backend or report persistence. v2 adds crop sliders, bounded image enlargement and contrast, automatic segmentation/deskew, and uncertain-word review. Compare mode uses original image. The supplied 866px-wide report photo remains unreliable; improvement does not make it clinically trustworthy. Next useful work: assess a native Android recognizer or better capture guidance, and test phone camera, memory, perspective correction and offline install on hardware. Preserve on-device extraction; obtain user direction before changing platform or introducing cloud processing. No private fixtures are in this repository.
+
+V3: dist/crop-editor.js implements zoom, pan, direct crop drawing and corner handles with percentage source coordinates. Selection preview is generated locally. Tests cover coordinate mapping across zoom/scroll and exact pixel exclusion. Offline cache is pocket-ocr-v3. Test actual phone pinch behaviour next.
+
+V4 fixes two-finger panning alongside pinch zoom with a fixed image anchor. tests/two-finger.cjs exercises real pointer handlers. Offline cache pocket-ocr-v4. Phone hardware check remains outstanding.
