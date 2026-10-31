@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "build": "node scripts/vendor-ocr.cjs",
-    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs"
+    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs",
+    "format": "prettier --write dist/*.js tests/*.cjs scripts/*.cjs"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "1.1.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "prettier": "3.9.10",
     "tesseract.js": "6.0.1",
-    "tesseract.js-core": "6.0.0",
-    "@tesseract.js-data/eng": "1.0.0"
+    "tesseract.js-core": "6.0.0"
   }
 }

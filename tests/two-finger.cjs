@@ -1,7 +1,77 @@
-const assert=require('node:assert/strict');require('../dist/crop-editor.js');
-function harness(){const elements=new Map();global.document={getElementById(id){if(!elements.has(id))elements.set(id,{style:{},value:'',textContent:''});return elements.get(id);}};const e=Object.create(global.ParagraphCropEditor.prototype);e.width=1000;e.height=2000;e.zoom=2;e.mode='select';e.points=new Map();e.crop={left:10,top:20,right:80,bottom:40};e.box={style:{}};e.viewport={clientWidth:400,clientHeight:400,scrollLeft:200,scrollTop:300,setPointerCapture(){},getBoundingClientRect(){return {left:0,top:0};}};e.stage={style:{},getBoundingClientRect(){return {left:-e.viewport.scrollLeft,top:-e.viewport.scrollTop,width:400*e.zoom,height:800*e.zoom};}};e.onChange=()=>{};return e;}
-const ev=(id,x,y)=>({pointerId:id,clientX:x,clientY:y,button:0,target:{dataset:{}},preventDefault(){}});
-const pan=harness();const original={...pan.crop};pan.down(ev(1,100,100));pan.down(ev(2,200,100));pan.move(ev(1,120,130));pan.move(ev(2,220,130));
-assert.equal(pan.zoom,2,'parallel two-finger movement must not change final zoom');assert.equal(pan.viewport.scrollLeft,180,'two fingers moving right must pan the image right');assert.equal(pan.viewport.scrollTop,270,'two fingers moving down must pan the image down');assert.deepEqual(pan.crop,original,'two fingers must not change the crop');
-const pinch=harness();pinch.down(ev(1,100,100));pinch.down(ev(2,200,100));pinch.move(ev(1,50,100));pinch.move(ev(2,250,100));assert.equal(pinch.zoom,4);assert.equal(pinch.viewport.scrollLeft,550,'the same image point must stay beneath the pinch midpoint');assert.equal(pinch.viewport.scrollTop,700);pinch.up(ev(1,50,100));const before={...pinch.crop};pinch.move(ev(2,260,110));assert.deepEqual(pinch.crop,before,'lifting one finger must not start an accidental crop');
+const assert = require('node:assert/strict');
+require('../dist/crop-editor.js');
+function harness() {
+  const elements = new Map();
+  global.document = {
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, { style: {}, value: '', textContent: '' });
+      return elements.get(id);
+    },
+  };
+  const e = Object.create(global.ParagraphCropEditor.prototype);
+  e.width = 1000;
+  e.height = 2000;
+  e.zoom = 2;
+  e.mode = 'select';
+  e.points = new Map();
+  e.crop = { left: 10, top: 20, right: 80, bottom: 40 };
+  e.box = { style: {} };
+  e.viewport = {
+    clientWidth: 400,
+    clientHeight: 400,
+    scrollLeft: 200,
+    scrollTop: 300,
+    setPointerCapture() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0 };
+    },
+  };
+  e.stage = {
+    style: {},
+    getBoundingClientRect() {
+      return {
+        left: -e.viewport.scrollLeft,
+        top: -e.viewport.scrollTop,
+        width: 400 * e.zoom,
+        height: 800 * e.zoom,
+      };
+    },
+  };
+  e.onChange = () => {};
+  return e;
+}
+const ev = (id, x, y) => ({
+  pointerId: id,
+  clientX: x,
+  clientY: y,
+  button: 0,
+  target: { dataset: {} },
+  preventDefault() {},
+});
+const pan = harness();
+const original = { ...pan.crop };
+pan.down(ev(1, 100, 100));
+pan.down(ev(2, 200, 100));
+pan.move(ev(1, 120, 130));
+pan.move(ev(2, 220, 130));
+assert.equal(pan.zoom, 2, 'parallel two-finger movement must not change final zoom');
+assert.equal(pan.viewport.scrollLeft, 180, 'two fingers moving right must pan the image right');
+assert.equal(pan.viewport.scrollTop, 270, 'two fingers moving down must pan the image down');
+assert.deepEqual(pan.crop, original, 'two fingers must not change the crop');
+const pinch = harness();
+pinch.down(ev(1, 100, 100));
+pinch.down(ev(2, 200, 100));
+pinch.move(ev(1, 50, 100));
+pinch.move(ev(2, 250, 100));
+assert.equal(pinch.zoom, 4);
+assert.equal(
+  pinch.viewport.scrollLeft,
+  550,
+  'the same image point must stay beneath the pinch midpoint',
+);
+assert.equal(pinch.viewport.scrollTop, 700);
+pinch.up(ev(1, 50, 100));
+const before = { ...pinch.crop };
+pinch.move(ev(2, 260, 110));
+assert.deepEqual(pinch.crop, before, 'lifting one finger must not start an accidental crop');
 console.log('Two-finger pan, anchored pinch and crop preservation passed.');
