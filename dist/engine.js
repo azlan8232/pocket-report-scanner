@@ -107,8 +107,8 @@
     };
   }
 
-  /* Uses primary until its recognise throws once; then reports the error through
-     onFallback and uses fallback for the rest of this tab's life. */
+  /* Uses primary until its recognise (which also loads it) throws once; then releases the
+     primary, reports the error through onFallback and uses fallback from then on. */
   function createEngineWithFallback(primary, fallback, onFallback) {
     let active = primary;
     return {
@@ -124,6 +124,9 @@
             return await primary.recognise(image, options);
           } catch (error) {
             active = fallback;
+            try {
+              await primary.terminate(); // free its memory before the fallback runs
+            } catch (_) {}
             onFallback(error);
           }
         return fallback.recognise(image, options);

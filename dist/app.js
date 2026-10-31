@@ -225,19 +225,9 @@ function createEngine(choice) {
     onProgress: showProgress,
   });
   if (choice === 'tesseract' || paddleFailed) return tesseract;
-  const paddle = (file) => new URL('vendor/paddle/' + file, location.href).href;
-  const paddleEngine = createPaddleEngine({
-    ort: async () => {
-      const ort = await import(paddle('ort.wasm.min.mjs'));
-      ort.env.wasm.wasmPaths = paddle('');
-      return ort;
-    },
-    paddle: () => import(paddle('paddleocr.mjs')),
-    modelUrls: {
-      detection: paddle('det.onnx'),
-      recognition: paddle('rec.onnx'),
-      dictionary: paddle('dict.txt'),
-    },
+  // PaddleOCR loads and runs inside paddle-worker.js, off the main thread.
+  const paddleEngine = createPaddleWorkerEngine({
+    workerUrl: new URL('paddle-worker.js', location.href).href,
     onProgress: showProgress,
   });
   return createEngineWithFallback(paddleEngine, tesseract, (error) => {

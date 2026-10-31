@@ -66,7 +66,8 @@
     };
   }
 
-  // A canvas (browser or @napi-rs/canvas) or, in Node, a PNG/JPEG Buffer -> RGBA pixels.
+  // A canvas (browser or @napi-rs/canvas), RGBA pixels { width, height, data } or, in
+  // Node, a PNG/JPEG Buffer -> RGBA pixels.
   async function toPixels(image) {
     let canvas = image;
     if (typeof Buffer !== 'undefined' && Buffer.isBuffer(image)) {
@@ -74,7 +75,7 @@
       const decoded = await loadImage(image);
       canvas = createCanvas(decoded.width, decoded.height);
       canvas.getContext('2d').drawImage(decoded, 0, 0);
-    }
+    } else if (!image.getContext) return image;
     const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
     return {
       width: data.width,
@@ -89,8 +90,20 @@
     return response.arrayBuffer();
   };
 
+  // Loading the runtime and 13 MB of models must finish in this time, or the engine
+  // reports an error (so the app falls back to Tesseract) instead of hanging.
+  const PADDLE_LOAD_TIMEOUT_MS = 60000;
+
+  function withTimeout(promise, ms, message) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   /* ort and paddle are the onnxruntime and paddleocr.js modules, or functions returning
-     (promises of) them, so the browser only loads them when first needed.
+     (promises of) them, so they are only loaded when first needed.
      modelUrls = { detection, recognition, dictionary }; readFile(url) -> ArrayBuffer. */
   function createPaddleEngine({
     ort,
@@ -98,6 +111,7 @@
     modelUrls,
     readFile = fetchBytes,
     onProgress,
+    loadTimeoutMs = PADDLE_LOAD_TIMEOUT_MS,
     groupLinesIntoParagraphs = root.groupLinesIntoParagraphs ||
       require('./engine.js').groupLinesIntoParagraphs,
   }) {
@@ -117,12 +131,29 @@
       // The dictionary file lists the characters; PP-OCR appends the space character.
       const characters = new TextDecoder().decode(dictionary).split(/\r?\n/).filter(Boolean);
       characters.push(' ');
-      return library.PaddleOcrService.createInstance({
+      const ocr = new library.PaddleOcrService({
         ort: ortModule,
         modelPreset: 'PP-OCRv5_mobile',
         detection: { modelBuffer: detection, ...DETECTION },
         recognition: { modelBuffer: recognition, charactersDictionary: characters },
       });
+      try {
+        await ocr.initialize();
+      } catch (error) {
+        await ocr.destroy().catch(() => {}); // release a session that did load
+        throw error;
+      }
+      return ocr;
+    }
+    function load() {
+      const starting = start();
+      return withTimeout(starting, loadTimeoutMs, 'PaddleOCR took too long to load').catch(
+        (error) => {
+          // If loading completes after the timeout, release what it created.
+          starting.then((ocr) => ocr.destroy()).catch(() => {});
+          throw error;
+        },
+      );
     }
     return {
       name: 'paddleocr',
@@ -130,7 +161,7 @@
       async recognise(image) {
         if (!service) {
           if (onProgress) onProgress({ status: 'loading PaddleOCR', progress: 0 });
-          service = start();
+          service = load();
         }
         let ocr;
         try {
@@ -159,7 +190,98 @@
     };
   }
 
-  const api = { createPaddleEngine, mapPaddleLines, splitLine, PADDLE_VERSION };
+  /* Worker side: answers { id, type: 'recognise', pixels } messages from
+     createPaddleWorkerEngine with progress, then a result or an error, one job at a time.
+     createEngine(onProgress) returns a createPaddleEngine engine. */
+  function servePaddleWorker(scope, createEngine) {
+    let current = 0;
+    const engine = createEngine((progress) =>
+      scope.postMessage({ id: current, type: 'progress', progress }),
+    );
+    let queue = Promise.resolve();
+    scope.onmessage = (event) => {
+      const { id, type, pixels } = event.data || {};
+      if (type !== 'recognise') return;
+      queue = queue.then(async () => {
+        current = id;
+        try {
+          scope.postMessage({ id, type: 'result', result: await engine.recognise(pixels) });
+        } catch (error) {
+          const message = String((error && error.message) || error);
+          scope.postMessage({ id, type: 'error', message });
+        }
+      });
+    };
+  }
+
+  /* Main-thread side with the same engine shape: loading, detection, recognition and all
+     image work run in a dedicated worker (workerUrl), so the page keeps painting. Only
+     reading the canvas pixels happens on the calling thread. terminate() ends the worker,
+     which frees all of its memory. */
+  function createPaddleWorkerEngine({
+    workerUrl,
+    onProgress,
+    createWorker = (url) => new Worker(url),
+  }) {
+    let worker = null;
+    let nextId = 0;
+    const pending = new Map();
+    function failAll(error) {
+      for (const { reject } of pending.values()) reject(error);
+      pending.clear();
+    }
+    function ensureWorker() {
+      if (worker) return worker;
+      worker = createWorker(workerUrl);
+      worker.onmessage = (event) => {
+        const message = event.data;
+        const entry = pending.get(message.id);
+        if (!entry) return;
+        if (message.type === 'progress') {
+          if (onProgress) onProgress(message.progress);
+          return;
+        }
+        pending.delete(message.id);
+        if (message.type === 'result') entry.resolve(message.result);
+        else entry.reject(new Error(message.message));
+      };
+      worker.onerror = (event) => {
+        if (event && event.preventDefault) event.preventDefault();
+        const failed = worker;
+        worker = null;
+        failed.terminate();
+        failAll(new Error('PaddleOCR worker failed: ' + ((event && event.message) || 'error')));
+      };
+      return worker;
+    }
+    return {
+      name: 'paddleocr',
+      version: PADDLE_VERSION,
+      async recognise(image) {
+        const pixels = await toPixels(image);
+        return new Promise((resolve, reject) => {
+          const id = ++nextId;
+          pending.set(id, { resolve, reject });
+          ensureWorker().postMessage({ id, type: 'recognise', pixels }, [pixels.data.buffer]);
+        });
+      },
+      async terminate() {
+        if (worker) worker.terminate();
+        worker = null;
+        failAll(new Error('PaddleOCR was stopped'));
+      },
+    };
+  }
+
+  const api = {
+    createPaddleEngine,
+    createPaddleWorkerEngine,
+    servePaddleWorker,
+    mapPaddleLines,
+    splitLine,
+    PADDLE_VERSION,
+    PADDLE_LOAD_TIMEOUT_MS,
+  };
   Object.assign(root, api);
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window === 'undefined' ? globalThis : window);

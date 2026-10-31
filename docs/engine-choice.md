@@ -10,16 +10,28 @@ ONNX Runtime Web** (WASM, `numThreads = 1`, no COOP/COEP).
 
 Why:
 
-- It is the only candidate that passes every gate: it runs unchanged in Node and in the
-  browser, it is MIT with no dependencies, it fetches nothing at runtime (the app passes model
-  bytes and ONNX Runtime in), and it ships one dependency-free ES module, so the buildless page
-  can `import()` it without a bundler.
-- The official PaddleOCR.js SDK scored slightly better (fair CER 0.15% against 0.28%), but it
-  depends on `clipper-lib`, which is under the Boost Software License 1.0. The licence rule for
-  this project is Apache-2.0, MIT or BSD only, so it is disqualified. It would also have needed
-  a bundler, Node shims and 10.4 MB of OpenCV.js.
-- `ppu-paddle-ocr` ran, but with its default pipeline it was far less accurate on the same
-  models (fair CER 44%).
+- It is the only candidate that passes every gate. It runs unchanged in Node and in the
+  browser, and fetches nothing at runtime: the app passes in the model bytes and ONNX Runtime.
+  It ships one ES module with no imports, so the buildless page can load it with `import()` and
+  needs no bundler.
+- Licence: MIT, with no npm dependencies. The built file also contains a TypeScript port of
+  Clipper2's polygon-offset code (Angus Johnson), which is under the Boost Software License 1.0
+  (BSL-1.0). The library's build strips that notice, so `scripts/vendor-ocr.cjs` puts it back at
+  the top of `paddleocr.mjs` and writes `LICENSE-clipper2-BSL-1.0.txt` beside it. BSL-1.0 is
+  OSI-approved and permissive, with no copyleft; the controller accepts it (Ruling I).
+- The official PaddleOCR.js SDK was **more accurate**: fair CER 0.15% against 0.28%, and poor
+  41.1% against 45.7%. It is disqualified **only** because its browser build imports four
+  packages by bare name (`onnxruntime-web`, `@techstark/opencv-js`, `clipper-lib`, `js-yaml`),
+  so it needs a bundler, which the buildless `dist/` app cannot take. Its `clipper-lib`
+  dependency is also BSL-1.0, which is acceptable under Ruling I, so the licence is not a
+  reason. If the app ever gains a build step, the owner may want to revisit this choice; it
+  would also add 10.4 MB of OpenCV.js.
+- `ppu-paddle-ocr` is disqualified under the Node and browser gate: its `/web` entry imports
+  `onnxruntime-web` and `ppu-ocv` by bare name, so the browser needs a bundler. It was also far
+  less accurate on the same models with its default pipeline (fair CER 44%).
+- ONNX Runtime Web is MIT. Its WASM statically links third-party code, including Eigen
+  (MPL-2.0, accepted under Ruling J). `ThirdPartyNotices-onnxruntime-web.txt` is vendored next
+  to its LICENSE.
 - Rec dictionary: the Latin rec beat the English rec on fair (0.28% against 1.06%) and on poor
   (45.7% against 47.2%), for 0.2 MB more. The multilingual (Chinese) PP-OCRv5 mobile rec was
   worse than both and twice the size.
@@ -58,9 +70,9 @@ WASM backend gave exactly the same text as onnxruntime-node and was about 3× sl
 
 | Candidate | Licence | Node | Browser | Runtime network | Verdict |
 |---|---|---|---|---|---|
-| paddleocr.js 1.2.0 (`paddleocr`) | MIT (declared in package.json and README; no LICENSE file upstream) | yes, CJS build | yes, a dependency-free ESM file loaded with `import()` | none: ort and model bytes are passed in | **chosen** |
-| Official PaddleOCR.js (`@paddleocr/paddleocr-js` 0.4.2) | Apache-2.0, but needs `clipper-lib` (Boost Software License 1.0), `js-yaml` (MIT) and `@techstark/opencv-js` (Apache-2.0) | browser SDK only. It ran in Node after stubbing `globalThis.location`, injecting `fetch` and passing a `cv.Mat` | needs a bundler (bare imports of 4 packages). The worker mode falls back to a jsDelivr CDN for the WASM unless `wasmPaths` is set | default models come from Baidu BOS. Custom tar URLs and an injected `fetch` avoid that | **disqualified**: BSL-1.0 dependency. Also bundler, shims, +10.4 MB OpenCV |
-| ppu-paddle-ocr 6.6.1 | MIT; `ppu-ocv` MIT, `@techstark/opencv-js` 5 Apache-2.0, `@napi-rs/canvas` MIT | yes | needs a bundler (`/web` entry imports `onnxruntime-web` and `ppu-ocv` by bare name) | default models come from Hugging Face or GitHub; ArrayBuffers can be passed in | runs, but least accurate (its own detection resize and grouping) |
+| paddleocr.js 1.2.0 (`paddleocr`) | MIT (declared in package.json and README; no LICENSE file upstream). The built file contains Clipper2 offset code under BSL-1.0 | yes, CJS build | yes, a dependency-free ESM file loaded with `import()` | none: ort and model bytes are passed in | **chosen** |
+| Official PaddleOCR.js (`@paddleocr/paddleocr-js` 0.4.2) | Apache-2.0, but needs `clipper-lib` (Boost Software License 1.0), `js-yaml` (MIT) and `@techstark/opencv-js` (Apache-2.0) | browser SDK only. It ran in Node after stubbing `globalThis.location`, injecting `fetch` and passing a `cv.Mat` | needs a bundler (bare imports of 4 packages). The worker mode falls back to a jsDelivr CDN for the WASM unless `wasmPaths` is set | default models come from Baidu BOS. Custom tar URLs and an injected `fetch` avoid that | **disqualified**: the browser build needs a bundler. It also needs Node shims and +10.4 MB OpenCV. Most accurate (fair 0.15%), so worth revisiting if a build step is ever added |
+| ppu-paddle-ocr 6.6.1 | MIT; `ppu-ocv` MIT, `@techstark/opencv-js` 5 Apache-2.0, `@napi-rs/canvas` MIT | yes | needs a bundler (`/web` entry imports `onnxruntime-web` and `ppu-ocv` by bare name) | default models come from Hugging Face or GitHub; ArrayBuffers can be passed in | **disqualified**: the browser build needs a bundler. Also least accurate (its own detection resize and grouping) |
 
 ## Models
 
@@ -77,14 +89,14 @@ them.
 | en_PP-OCRv5_mobile_rec (spike only) | …/en_PP-OCRv5_mobile_rec_onnx_infer.tar | 4424e851309b291b00aab8191cd4314cefbd2d1b2381ff8994019d262fa95e28 | — | 7,848,423 |
 | PP-OCRv5_mobile_rec, multilingual (spike only) | …/PP-OCRv5_mobile_rec_onnx_infer.tar | f7e792bc836f36e7ef895ad47c426d75b0b75b1650caa6d63fe9418441ffba8c | — | 16,534,782 |
 
-## What is vendored (dist/vendor/paddle, 27.4 MB)
+## What is vendored (dist/vendor/paddle, 27.7 MB)
 
 | File | Source | Licence | Bytes |
 |---|---|---|---|
-| paddleocr.mjs | `paddleocr@1.2.0` dist/index.mjs | MIT | 200,504 |
+| paddleocr.mjs | `paddleocr@1.2.0` dist/index.mjs, with the Clipper2 BSL-1.0 notice from its source restored at the top | MIT, with BSL-1.0 Clipper2 code | 202,340 |
 | ort.wasm.min.mjs, ort-wasm-simd-threaded.mjs, ort-wasm-simd-threaded.wasm | `onnxruntime-web@1.30.0` dist | MIT | 14,314,404 |
 | det.onnx, rec.onnx, dict.txt | PaddleX archives above | Apache-2.0 | 12,871,157 |
-| LICENSE-paddleocr.js.txt, LICENSE-onnxruntime-web.txt, LICENSE-PaddleOCR-models.txt | standard MIT text (no upstream file), microsoft/onnxruntime v1.30.0 LICENSE, PaddlePaddle/PaddleOCR v3.0.0 LICENSE | — | 13,708 |
+| LICENSE-paddleocr.js.txt, LICENSE-clipper2-BSL-1.0.txt, LICENSE-onnxruntime-web.txt, ThirdPartyNotices-onnxruntime-web.txt, LICENSE-PaddleOCR-models.txt | standard MIT text (no upstream file); AngusJohnson/Clipper2 tag Clipper2_1.4.0 LICENSE (sha256 c9bff757…); microsoft/onnxruntime v1.30.0 LICENSE and ThirdPartyNotices.txt (sha256 143764b9…); PaddlePaddle/PaddleOCR v3.0.0 LICENSE | — | 353,370 |
 
 The spike used onnxruntime-web/node 1.31.1. The app pins onnxruntime-web 1.30.0, which was
 released six weeks before the spike rather than five days. `npm run accuracy` reruns the chosen

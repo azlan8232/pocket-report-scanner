@@ -8,6 +8,7 @@ const assets = [
   'prepare.js',
   'engine.js',
   'engine-paddle.js',
+  'paddle-worker.js',
   'crop-editor.js',
   'icon.svg',
   'manifest.json',

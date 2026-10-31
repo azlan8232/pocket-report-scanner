@@ -36,7 +36,22 @@ copy('@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz', 'lang/eng.train
 copy('tesseract.js-core/LICENSE', 'LICENSE-core');
 
 // PaddleOCR: paddleocr.js on single-threaded ONNX Runtime Web (WASM, no WebGPU).
-copy('paddleocr/dist/index.mjs', 'paddle/paddleocr.mjs');
+// paddleocr.mjs contains a port of Clipper2 offset code under BSL-1.0; its build strips
+// the notice, so the notice from the library's source is put back at the top of the file.
+const clipperSource = fs.readFileSync(
+  path.join(modules, 'paddleocr/src/core/geometry/clipper-offset.ts'),
+  'utf8',
+);
+const clipperNotice = clipperSource.slice(0, clipperSource.indexOf('*/') + 2);
+if (!clipperNotice.includes('Boost Software License')) throw new Error('Clipper2 notice not found');
+fs.writeFileSync(
+  path.join(vendor, 'paddle/paddleocr.mjs'),
+  '/* paddleocr.js 1.2.0, MIT: see LICENSE-paddleocr.js.txt. Includes Clipper2 code under\n' +
+    ' * BSL-1.0: see LICENSE-clipper2-BSL-1.0.txt and the notice below. */\n' +
+    clipperNotice +
+    '\n' +
+    fs.readFileSync(path.join(modules, 'paddleocr/dist/index.mjs'), 'utf8'),
+);
 for (const file of [
   'ort.wasm.min.mjs',
   'ort-wasm-simd-threaded.mjs',
@@ -62,6 +77,14 @@ const DOWNLOADS = {
   ortLicence: {
     url: 'https://raw.githubusercontent.com/microsoft/onnxruntime/v1.30.0/LICENSE',
     sha256: '2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c',
+  },
+  ortNotices: {
+    url: 'https://raw.githubusercontent.com/microsoft/onnxruntime/v1.30.0/ThirdPartyNotices.txt',
+    sha256: '143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3',
+  },
+  clipperLicence: {
+    url: 'https://raw.githubusercontent.com/AngusJohnson/Clipper2/Clipper2_1.4.0/LICENSE',
+    sha256: 'c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566',
   },
 };
 
@@ -94,7 +117,7 @@ function tarEntry(tar, suffix) {
 }
 
 async function vendorPaddle() {
-  const [det, rec, paddleLicence, ortLicence] = await Promise.all(
+  const [det, rec, paddleLicence, ortLicence, ortNotices, clipperLicence] = await Promise.all(
     Object.values(DOWNLOADS).map(download),
   );
   const out = (name) => path.join(vendor, 'paddle', name);
@@ -108,6 +131,14 @@ async function vendorPaddle() {
   fs.writeFileSync(out('dict.txt'), characters.join('\n') + '\n');
   fs.writeFileSync(out('LICENSE-PaddleOCR-models.txt'), paddleLicence);
   fs.writeFileSync(out('LICENSE-onnxruntime-web.txt'), ortLicence);
+  fs.writeFileSync(out('ThirdPartyNotices-onnxruntime-web.txt'), ortNotices);
+  fs.writeFileSync(
+    out('LICENSE-clipper2-BSL-1.0.txt'),
+    'paddleocr.mjs includes a TypeScript port of the closed-polygon round offset from\n' +
+      'Clipper2 (CPP/Clipper2Lib/src/clipper.offset.cpp), Author and Copyright: Angus Johnson\n' +
+      '2010-2024, http://www.angusj.com. Clipper2 is licensed as follows.\n\n' +
+      clipperLicence,
+  );
   fs.writeFileSync(out('LICENSE-paddleocr.js.txt'), PADDLEOCR_JS_LICENCE);
 }
 

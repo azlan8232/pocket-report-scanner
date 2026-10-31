@@ -45,6 +45,23 @@ const { createEngineWithFallback } = require('../dist/engine.js');
   assert.equal(fallbackCalls, 2);
   assert.equal(notices.length, 1);
 
+  // Switching releases the primary (e.g. PaddleOCR's memory after an OOM), even when its
+  // terminate fails.
+  let released = 0;
+  const leaky = createEngineWithFallback(
+    {
+      ...primary,
+      terminate: async () => {
+        released++;
+        throw new Error('already gone');
+      },
+    },
+    fallback,
+    () => {},
+  );
+  assert.equal(await leaky.recognise('image', { mode: 'photo' }), fixed);
+  assert.equal(released, 1);
+
   // terminate stops both engines.
   const stopped = [];
   const both = createEngineWithFallback(
