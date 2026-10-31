@@ -52,17 +52,19 @@ const ENGINES = {
 };
 
 // A variant entry: prepare(buffer) returns { image: Buffer, mode } to hand to the engine.
-const VARIANTS = {
-  raw: {
-    implemented: true,
-    // The app's default path: preparePhoto in photo mode, then recognise.
-    prepare: async (buffer) => {
-      const source = await loadImage(buffer);
-      const canvas = preparePhoto(source, { mode: 'photo' }, () => createCanvas(1, 1));
-      return { image: canvas.toBuffer('image/png'), mode: 'photo' };
-    },
+const photoVariant = (options) => ({
+  implemented: true,
+  prepare: async (buffer) => {
+    const source = await loadImage(buffer);
+    const canvas = preparePhoto(source, { mode: 'photo', ...options }, () => createCanvas(1, 1));
+    return { image: canvas.toBuffer('image/png'), mode: 'photo' };
   },
-  clean: { implemented: false },
+});
+const VARIANTS = {
+  // preparePhoto in photo mode without shadow removal.
+  raw: photoVariant({ background: false }),
+  // The same with background normalisation (shadow removal) switched on.
+  clean: photoVariant({ background: true }),
   straight: { implemented: false },
   suggest: { implemented: false },
 };

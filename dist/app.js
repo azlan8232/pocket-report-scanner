@@ -66,11 +66,15 @@ function showCanvas() {
   editor.setImage(canvas.width, canvas.height);
   resetCrop();
   $('quality').textContent =
-    canvas.width < 1400
-      ? 'Small image: ' +
-        canvas.width +
-        ' pixels wide. Tiny or blurred letters may remain unreadable. Crop to one section, or retake a close-up at full resolution.'
-      : 'Use a flat, sharp photo. Read one section at a time if the report has very small print.';
+    'Use a flat, sharp photo. Read one section at a time if the report has very small print.';
+  // A warning only, never a block: extraction stays available.
+  const warnings = qualityWarnings({
+    width: canvas.width,
+    height: canvas.height,
+    sharpness: sharpnessScore(canvas),
+  });
+  $('photoWarning').textContent = warnings.join(' ');
+  $('photoWarning').hidden = !warnings.length;
 }
 function resetResult() {
   $('uncertain').hidden = true;
@@ -333,6 +337,7 @@ $('clear').onclick = () => {
   $('imageArea').hidden = true;
   $('empty').hidden = false;
   $('quality').textContent = '';
+  $('photoWarning').hidden = true;
   $('fileInfo').textContent = '';
   resetResult();
   status('Image and text cleared from this tab. Copies you exported remain on your device.');

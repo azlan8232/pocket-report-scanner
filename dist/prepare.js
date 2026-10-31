@@ -1,9 +1,95 @@
 /* Local photo preparation. No recognition or medical-word substitutions here. */
 (function (root) {
   'use strict';
+  const BACKGROUND_SCALE = 16; // the background estimate is the image at 1/16 size, scaled back up
+  const SHARPNESS_WIDTH = 1000; // sharpness is measured on at most this many pixels across
+  const MIN_SHORT_SIDE = 1500;
+  // Midpoint of the median Laplacian-variance scores of the good (1220) and poor (10.6) fixtures.
+  const SHARPNESS_MIN = 615;
+  const luma = (d, i) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+
+  // Divides out uneven lighting: each pixel becomes gray / background, where the background
+  // is a heavily smoothed copy of the image. Text stays dark; shadowed paper becomes even.
+  function normaliseBackground(source, make) {
+    const w = source.width,
+      h = source.height;
+    const small = make();
+    small.width = Math.max(1, Math.round(w / BACKGROUND_SCALE));
+    small.height = Math.max(1, Math.round(h / BACKGROUND_SCALE));
+    const sctx = small.getContext('2d');
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(source, 0, 0, small.width, small.height);
+    const back = make();
+    back.width = w;
+    back.height = h;
+    const bctx = back.getContext('2d');
+    bctx.imageSmoothingEnabled = true;
+    bctx.imageSmoothingQuality = 'high';
+    bctx.drawImage(small, 0, 0, w, h);
+    const out = make();
+    out.width = w;
+    out.height = h;
+    const octx = out.getContext('2d');
+    const pixels = octx.createImageData(w, h),
+      d = pixels.data;
+    octx.drawImage(source, 0, 0);
+    const src = octx.getImageData(0, 0, w, h).data,
+      bg = bctx.getImageData(0, 0, w, h).data;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.min(255, (luma(src, i) * 255) / Math.max(1, luma(bg, i)));
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
+    octx.putImageData(pixels, 0, 0);
+    return out;
+  }
+
+  // Variance of the 3x3 Laplacian on grayscale: higher means sharper.
+  function sharpnessScore(canvas, make = () => document.createElement('canvas')) {
+    const scale = Math.min(1, SHARPNESS_WIDTH / canvas.width);
+    const w = Math.max(3, Math.round(canvas.width * scale)),
+      h = Math.max(3, Math.round(canvas.height * scale));
+    const small = make();
+    small.width = w;
+    small.height = h;
+    const ctx = small.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < gray.length; i++) gray[i] = luma(d, i * 4);
+    let sum = 0,
+      sumSq = 0,
+      n = 0;
+    for (let y = 1; y < h - 1; y++)
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        const lap = gray[i - w] + gray[i + w] + gray[i - 1] + gray[i + 1] - 4 * gray[i];
+        sum += lap;
+        sumSq += lap * lap;
+        n++;
+      }
+    const mean = sum / n;
+    return sumSq / n - mean * mean;
+  }
+
+  function qualityWarnings({ width, height, sharpness }) {
+    const warnings = [];
+    if (Math.min(width, height) < MIN_SHORT_SIDE)
+      warnings.push('Small image: retake closer or at full resolution.');
+    if (sharpness < SHARPNESS_MIN) warnings.push('Photo looks blurred: hold steady and retake.');
+    return warnings;
+  }
+
   function preparePhoto(
     source,
-    { mode = 'photo', crop = { left: 0, top: 0, right: 100, bottom: 100 } } = {},
+    {
+      mode = 'photo',
+      crop = { left: 0, top: 0, right: 100, bottom: 100 },
+      background = mode === 'photo',
+    } = {},
     make = () => document.createElement('canvas'),
   ) {
     const x = Math.round((source.width * crop.left) / 100),
@@ -18,6 +104,7 @@
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(source, x, y, w, h, 0, 0, w, h);
     if (mode === 'original') return input;
+    if (background) ctx.drawImage(normaliseBackground(input, make), 0, 0);
     // Luminance contrast: suppress grey paper without hard thresholding faint characters.
     const pixels = ctx.getImageData(0, 0, w, h),
       d = pixels.data,
@@ -70,5 +157,8 @@
     return out;
   }
   root.preparePhoto = preparePhoto;
-  if (typeof module !== 'undefined') module.exports = { preparePhoto };
+  root.sharpnessScore = sharpnessScore;
+  root.qualityWarnings = qualityWarnings;
+  if (typeof module !== 'undefined')
+    module.exports = { preparePhoto, normaliseBackground, sharpnessScore, qualityWarnings };
 })(typeof window === 'undefined' ? globalThis : window);
