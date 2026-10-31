@@ -42,7 +42,15 @@ function lock(value) {
   busy = value;
   for (const id of ['camera', 'choose', 'replace', 'rotate', 'extract', 'demo', 'clear'])
     $(id).disabled = value;
-  for (const id of ['cropTop', 'cropBottom', 'cropLeft', 'cropRight', 'cropReset', 'scanMode'])
+  for (const id of [
+    'cropTop',
+    'cropBottom',
+    'cropLeft',
+    'cropRight',
+    'cropReset',
+    'scanMode',
+    'engine',
+  ])
     $(id).disabled = value;
   for (const id of ['zoom', 'zoomIn', 'zoomOut', 'zoomFit', 'selectMode', 'panMode'])
     $(id).disabled = value;
@@ -177,9 +185,74 @@ $('scanMode').onchange = () => {
   resetResult();
   status('Reading mode changed. Extract again when ready.');
 };
+// Engine choice: PaddleOCR by default, falling back to Tesseract if it cannot run here.
+const ENGINE_KEY = 'pocket-ocr-engine';
+const FALLBACK_NOTICE = 'PaddleOCR could not run on this device, so Tesseract was used.';
+let paddleFailed = false; // once PaddleOCR fails, this tab keeps using Tesseract
+try {
+  if (localStorage.getItem(ENGINE_KEY) === 'tesseract') $('engine').value = 'tesseract';
+} catch (_) {}
+$('engine').onchange = () => {
+  try {
+    localStorage.setItem(ENGINE_KEY, $('engine').value);
+  } catch (_) {}
+  const old = engine;
+  engine = null;
+  if (old) old.terminate().catch(() => {});
+  $('engineNotice').hidden = !(paddleFailed && $('engine').value === 'paddle');
+  resetResult();
+  status('Engine changed. Extract again when ready.');
+};
+let progressRun = 0; // progress messages only show for the extraction in flight
+function showProgress(m) {
+  if (progressRun !== run) return;
+  const p = Number.isFinite(m.progress) ? Math.round(m.progress * 100) : 0;
+  $('progress').value = m.progress || 0;
+  status(
+    (m.status === 'recognizing text'
+      ? 'Reading your report'
+      : m.status.replace(/^./, (x) => x.toUpperCase())) + ` · ${p}%`,
+  );
+}
+function createEngine(choice) {
+  const tesseract = createTesseractEngine({
+    Tesseract,
+    paths: {
+      workerPath: new URL('vendor/worker.min.js', location.href).href,
+      corePath: new URL('vendor/core/', location.href).href,
+      langPath: new URL('vendor/lang/', location.href).href.replace(/\/$/, ''),
+    },
+    onProgress: showProgress,
+  });
+  if (choice === 'tesseract' || paddleFailed) return tesseract;
+  const paddle = (file) => new URL('vendor/paddle/' + file, location.href).href;
+  const paddleEngine = createPaddleEngine({
+    ort: async () => {
+      const ort = await import(paddle('ort.wasm.min.mjs'));
+      ort.env.wasm.wasmPaths = paddle('');
+      return ort;
+    },
+    paddle: () => import(paddle('paddleocr.mjs')),
+    modelUrls: {
+      detection: paddle('det.onnx'),
+      recognition: paddle('rec.onnx'),
+      dictionary: paddle('dict.txt'),
+    },
+    onProgress: showProgress,
+  });
+  return createEngineWithFallback(paddleEngine, tesseract, (error) => {
+    console.warn('PaddleOCR failed', error);
+    paddleFailed = true;
+    $('engineNotice').textContent = FALLBACK_NOTICE;
+    $('engineNotice').hidden = false;
+  });
+}
+const meanConfidence = (spans) =>
+  spans.length ? spans.reduce((sum, s) => sum + s.confidence, 0) / spans.length : 0;
 $('extract').onclick = async () => {
   if (!canvas || busy) return;
   const token = ++run;
+  progressRun = token;
   lock(true);
   resetResult();
   $('progress').hidden = false;
@@ -190,25 +263,7 @@ $('extract').onclick = async () => {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const mode = $('scanMode').value;
     prepared = preparePhoto(canvas, { mode, crop });
-    if (!engine)
-      engine = createTesseractEngine({
-        Tesseract,
-        paths: {
-          workerPath: new URL('vendor/worker.min.js', location.href).href,
-          corePath: new URL('vendor/core/', location.href).href,
-          langPath: new URL('vendor/lang/', location.href).href.replace(/\/$/, ''),
-        },
-        onProgress: (m) => {
-          if (token !== run) return;
-          const p = Number.isFinite(m.progress) ? Math.round(m.progress * 100) : 0;
-          $('progress').value = m.progress || 0;
-          status(
-            (m.status === 'recognizing text'
-              ? 'Reading your report'
-              : m.status.replace(/^./, (x) => x.toUpperCase())) + ` · ${p}%`,
-          );
-        },
-      });
+    if (!engine) engine = createEngine($('engine').value);
     const result = await engine.recognise(prepared, { mode });
     if (token !== run) return;
     const { text, spans } = composeText(result);
@@ -224,7 +279,10 @@ $('extract').onclick = async () => {
           .map((s) => s.text)
           .join(' · ') + (uncertain.length > 100 ? ' · …' : '');
     }
-    const confidence = Math.round(result.confidence * 100);
+    // Engines may omit an overall confidence; then use the mean word confidence.
+    const confidence = Math.round(
+      100 * (Number.isFinite(result.confidence) ? result.confidence : meanConfidence(spans)),
+    );
     status(
       text.trim()
         ? `Extraction complete · OCR confidence ${confidence}% (not accuracy). ${confidence < 80 ? 'Low confidence: retake a closer photo or crop to one section. ' : ''}Check every line against the original.`

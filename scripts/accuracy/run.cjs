@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
+const { pathToFileURL } = require('node:url');
 const { composeText, createTesseractEngine } = require('../../dist/engine.js');
+const { createPaddleEngine } = require('../../dist/engine-paddle.js');
 const { preparePhoto } = require('../../dist/prepare.js');
 const { cer, wer, numberAccuracy } = require('./metrics.cjs');
 
@@ -27,7 +29,26 @@ const ENGINES = {
       });
     },
   },
-  paddle: { implemented: false },
+  paddle: {
+    implemented: true,
+    // Loads the vendored browser files (npm run build), so this exercises the same
+    // paddleocr.js module, single-threaded ONNX Runtime Web WASM and models as the page.
+    create: async () => {
+      const dir = path.join(ROOT, 'dist/vendor/paddle');
+      if (!fs.existsSync(path.join(dir, 'rec.onnx'))) throw new Error('Run npm run build first.');
+      const load = (file) => () => import(pathToFileURL(path.join(dir, file)).href);
+      return createPaddleEngine({
+        ort: load('ort.wasm.min.mjs'),
+        paddle: load('paddleocr.mjs'),
+        modelUrls: {
+          detection: path.join(dir, 'det.onnx'),
+          recognition: path.join(dir, 'rec.onnx'),
+          dictionary: path.join(dir, 'dict.txt'),
+        },
+        readFile: async (file) => new Uint8Array(fs.readFileSync(file)).buffer,
+      });
+    },
+  },
 };
 
 // A variant entry: prepare(buffer) returns { image: Buffer, mode } to hand to the engine.

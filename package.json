@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node scripts/vendor-ocr.cjs",
-    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs && node tests/engine.cjs && node tests/metrics.cjs",
+    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs && node tests/engine.cjs && node tests/engine-fallback.cjs && node tests/engine-paddle.cjs && node tests/metrics.cjs",
     "format": "prettier --write dist/*.js tests/*.cjs scripts/*.cjs scripts/accuracy/*.cjs",
     "fixtures": "node scripts/accuracy/render-fixtures.cjs",
     "accuracy": "node scripts/accuracy/run.cjs"
@@ -13,6 +13,9 @@
     "@napi-rs/canvas": "1.1.0",
     "@techstark/opencv-js": "4.12.0-release.1",
     "@tesseract.js-data/eng": "1.0.0",
+    "js-yaml": "4.1.0",
+    "onnxruntime-web": "1.30.0",
+    "paddleocr": "1.2.0",
     "prettier": "3.9.10",
     "tesseract.js": "6.0.1",
     "tesseract.js-core": "6.0.0"

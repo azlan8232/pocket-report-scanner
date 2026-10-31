@@ -107,7 +107,40 @@
     };
   }
 
-  const api = { composeText, groupLinesIntoParagraphs, mapTesseractData, createTesseractEngine };
+  /* Uses primary until its recognise throws once; then reports the error through
+     onFallback and uses fallback for the rest of this tab's life. */
+  function createEngineWithFallback(primary, fallback, onFallback) {
+    let active = primary;
+    return {
+      get name() {
+        return active.name;
+      },
+      get version() {
+        return active.version;
+      },
+      async recognise(image, options) {
+        if (active === primary)
+          try {
+            return await primary.recognise(image, options);
+          } catch (error) {
+            active = fallback;
+            onFallback(error);
+          }
+        return fallback.recognise(image, options);
+      },
+      async terminate() {
+        await Promise.all([primary.terminate(), fallback.terminate()]);
+      },
+    };
+  }
+
+  const api = {
+    composeText,
+    groupLinesIntoParagraphs,
+    mapTesseractData,
+    createTesseractEngine,
+    createEngineWithFallback,
+  };
   Object.assign(root, api);
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window === 'undefined' ? globalThis : window);
