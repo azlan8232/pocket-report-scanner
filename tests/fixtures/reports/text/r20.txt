@@ -1,0 +1,16 @@
+FICTIONAL TEST REPORT
+CLINIC LETTER
+Date of clinic: 29/08/2025
+Clinic: Cardiology outpatients (fictional)
+Diagnosis: Mitral valve prolapse with moderate mitral regurgitation.
+Dear Doctor,
+Thank you for asking me to review this patient, aged 54, who attends with palpitations occurring about twice a week, each lasting 2 to 3 minutes, with no syncope or chest pain. Her exercise tolerance is unchanged at roughly 400 metres on the flat.
+On examination the pulse was 72 beats per minute and regular, blood pressure 128/76 mmHg. There was a mid-systolic click followed by a grade 2/6 apical pansystolic murmur radiating to the axilla. The chest was clear and there was no peripheral oedema.
+Echocardiography today showed prolapse of the posterior mitral leaflet with moderate eccentric regurgitation, progressed from mild on the study of 14/02/2023. The left atrium measures 46 mm and the ejection fraction is 62 percent.
+PLAN:
+1. Continue bisoprolol 2.5 mg once daily.
+2. 24 hour ambulatory ECG monitor to be arranged.
+3. Repeat echocardiogram in 12 months, sooner if symptoms worsen.
+4. Review in clinic after the monitor results.
+Yours sincerely,
+[fictional clinician], Consultant Cardiologist

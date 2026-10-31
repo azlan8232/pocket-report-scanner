@@ -1,0 +1,10 @@
+FICTIONAL TEST REPORT
+CHEST RADIOGRAPH, PA ERECT
+Date of examination: 05/01/2025
+Clinical details: Fever and productive cough for four days.
+FINDINGS:
+There is patchy consolidation in the right lower zone with air bronchograms, obscuring the right hemidiaphragm. The right costophrenic angle is blunted, suggesting a small parapneumonic effusion. The left lung is clear. The heart size is within normal limits, with a cardiothoracic ratio of 0.46. The mediastinal contour and hila are normal. The trachea is central. No pneumothorax. There is no acute bony abnormality. Degenerative changes are noted in the thoracic spine. The visualised upper abdomen is unremarkable and there is no free subdiaphragmatic gas.
+IMPRESSION:
+1. Right lower lobe pneumonia with a small associated effusion.
+2. Follow-up radiograph in 6 weeks is recommended to confirm resolution.
+Reporting radiologist: [fictional]

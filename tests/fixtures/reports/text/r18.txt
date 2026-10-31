@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+TRANSTHORACIC ECHOCARDIOGRAM, WITH BUBBLE STUDY
+Date of examination: 03/06/2025
+Clinical details: Cryptogenic transient ischaemic attack, 44 year old, query patent foramen ovale.
+Image quality: Good.
+FINDINGS:
+The left ventricle is normal in size and wall thickness, with an end-diastolic diameter of 47 mm and an ejection fraction of 60 percent. There is no regional wall motion abnormality. The left atrium is normal at 36 mm. The atrial septum is mobile with a small septal aneurysm. Agitated saline was injected through an antecubital vein. At rest, no bubbles crossed to the left heart. After a Valsalva manoeuvre, approximately 15 bubbles appeared in the left atrium within three cardiac cycles, consistent with a moderate right to left shunt. All four cardiac valves are structurally normal with no significant regurgitation or stenosis. The right ventricle is normal in size, with a TAPSE of 23 mm. The aortic root measures 31 mm. There is no pericardial effusion and no intracardiac thrombus.
+IMPRESSION:
+1. Patent foramen ovale with a moderate Valsalva-provoked right to left shunt and an atrial septal aneurysm.
+2. Normal biventricular size and function.
+Reporting cardiac physiologist: [fictional]

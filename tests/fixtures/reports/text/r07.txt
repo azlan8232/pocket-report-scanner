@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+MRI BRAIN WITH AND WITHOUT GADOLINIUM
+Date of examination: 11/08/2025
+Clinical details: Recurrent episodes of left arm numbness, query demyelination.
+Technique: Axial T2, FLAIR and diffusion weighted imaging, sagittal T1, post-contrast axial and coronal T1.
+FINDINGS:
+There are four foci of T2 and FLAIR hyperintensity in the periventricular white matter, the largest measuring 11 mm in the right frontal region and oriented perpendicular to the lateral ventricle. One lesion in the right corona radiata shows incomplete ring enhancement after contrast. There is no restricted diffusion. A further 5 mm juxtacortical lesion is seen in the left parietal lobe. The posterior fossa structures and corpus callosum are normal. The ventricles are normal in size. No mass effect or midline shift. The pituitary gland and optic chiasm appear normal. The major intracranial flow voids are preserved.
+IMPRESSION:
+1. Multiple periventricular and juxtacortical white matter lesions, one enhancing, in keeping with active demyelination.
+2. Clinical and neurological correlation is advised.
+Reporting radiologist: [fictional]

@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+TRANSTHORACIC ECHOCARDIOGRAM
+Date of examination: 18/07/2025
+Clinical details: Exertional dyspnoea, ejection systolic murmur.
+Image quality: Adequate.
+FINDINGS:
+The left ventricle is mildly dilated, with an end-diastolic diameter of 56 mm. Wall thickness is normal at 10 mm. Left ventricular systolic function is mildly impaired with an estimated ejection fraction of 45 percent and global hypokinesia. The aortic valve is trileaflet and calcified, with restricted opening. The peak velocity across the aortic valve is 3.8 m/s, the mean gradient is 34 mmHg and the aortic valve area is 1.1 cm2, consistent with moderate aortic stenosis. There is trivial aortic regurgitation. The mitral valve shows mild regurgitation. The left atrium is mildly enlarged at 43 mm. Right ventricular size and function are normal. Estimated pulmonary artery systolic pressure is 32 mmHg. There is no pericardial effusion.
+IMPRESSION:
+1. Moderate calcific aortic stenosis.
+2. Mildly dilated left ventricle with mildly impaired systolic function, ejection fraction 45 percent.
+Reporting cardiac physiologist: [fictional]

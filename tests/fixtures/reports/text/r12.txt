@@ -1,0 +1,10 @@
+FICTIONAL TEST REPORT
+ABDOMINAL RADIOGRAPH, SUPINE
+Date of examination: 12/04/2025
+Clinical details: Abdominal distension and vomiting for two days, previous laparotomy.
+FINDINGS:
+There are multiple dilated loops of small bowel in the central abdomen, the widest measuring 38 mm, with valvulae conniventes visible across the lumen. Air-fluid levels cannot be assessed on a supine film. The large bowel is collapsed, with minimal gas in the rectum. No pneumoperitoneum is seen, and there is no evidence of pneumatosis. Surgical clips are present in the right lower quadrant. The visualised lung bases are clear. The bones show degenerative change of the lumbar spine. No renal tract calcification.
+IMPRESSION:
+1. Dilated small bowel loops with a collapsed colon, in keeping with small bowel obstruction.
+2. Computed tomography is advised to define the level and cause.
+Reporting radiologist: [fictional]

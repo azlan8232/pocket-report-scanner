@@ -1,0 +1,10 @@
+FICTIONAL TEST REPORT
+ULTRASOUND THYROID AND NECK
+Date of examination: 07/03/2025
+Clinical details: Palpable swelling in the right side of the neck.
+FINDINGS:
+The right lobe of the thyroid measures 5.1 x 2.0 x 1.9 cm and the left lobe measures 4.4 x 1.4 x 1.5 cm. The isthmus is 4 mm thick. Within the lower pole of the right lobe there is a well defined solid nodule measuring 22 x 17 x 15 mm. It is hypoechoic with a thin halo and no microcalcification. Internal vascularity is seen on colour Doppler. The nodule is wider than tall. A separate 6 mm colloid cyst with a comet tail artefact lies in the left lobe. There are several small reactive-appearing level II lymph nodes bilaterally, each with a preserved fatty hilum, the largest 8 mm in short axis.
+IMPRESSION:
+1. 22 mm solid right thyroid nodule, TIRADS 3. Fine needle aspiration is suggested.
+2. Benign appearing left colloid cyst.
+Reporting radiologist: [fictional]

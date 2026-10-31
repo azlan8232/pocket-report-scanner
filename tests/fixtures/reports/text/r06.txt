@@ -1,0 +1,12 @@
+FICTIONAL TEST REPORT
+CT PULMONARY ANGIOGRAM
+Date of examination: 28/07/2025
+Clinical details: Pleuritic chest pain and tachycardia, D-dimer 2450 ng/ml.
+Technique: Bolus tracked arterial phase, 70 ml contrast at 5 ml per second.
+FINDINGS:
+Contrast opacification of the pulmonary arteries is good. There is a filling defect in the right lower lobe segmental artery extending into two subsegmental branches, in keeping with acute pulmonary embolism. The main pulmonary artery measures 27 mm and the right ventricle to left ventricle ratio is 0.9, with no septal bowing. A wedge-shaped peripheral opacity measuring 25 x 18 mm in the right lower lobe is consistent with pulmonary infarction. A small right pleural effusion is present. The left lung is clear. No pericardial effusion. The thoracic aorta is of normal calibre. No lymphadenopathy.
+IMPRESSION:
+1. Acute segmental pulmonary embolism in the right lower lobe.
+2. Right lower lobe infarct with a small right pleural effusion.
+3. No CT evidence of right heart strain.
+Reporting radiologist: [fictional]

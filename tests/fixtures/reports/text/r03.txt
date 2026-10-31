@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+MRI LUMBAR SPINE
+Date of examination: 22/04/2025
+Clinical details: Low back pain radiating to the right leg for six weeks.
+Technique: Sagittal T1, T2 and STIR, axial T2 sequences through L3 to S1.
+FINDINGS:
+Vertebral body heights and alignment are maintained. There is loss of disc signal at L4/5 and L5/S1 consistent with early degeneration. At L4/5 there is a broad-based posterior disc bulge with a right paracentral protrusion measuring 9 mm, which contacts and displaces the traversing right L5 nerve root. The central canal anteroposterior diameter is 11 mm at this level. At L5/S1 there is mild bilateral foraminal narrowing, greater on the left. The conus medullaris terminates at L1 and appears normal. No marrow oedema or destructive lesion. The paraspinal soft tissues are unremarkable.
+IMPRESSION:
+1. Right paracentral L4/5 disc protrusion displacing the right L5 nerve root.
+2. Mild left foraminal narrowing at L5/S1.
+Reporting radiologist: [fictional]

@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+CT KIDNEYS, URETERS AND BLADDER, LOW DOSE
+Date of examination: 30/09/2025
+Clinical details: Left loin to groin pain, haematuria on dipstick.
+Technique: Unenhanced low dose helical acquisition from diaphragm to symphysis pubis.
+FINDINGS:
+There is a 6 mm calculus in the left distal ureter, 15 mm proximal to the vesicoureteric junction, measuring approximately 480 Hounsfield units. There is mild left hydronephrosis with perinephric stranding. The left renal pelvis measures 17 mm in anteroposterior diameter. No other left-sided calculi are seen. The right kidney is normal in size with no calculi or hydronephrosis. The bladder is partially filled and the wall is not thickened. The prostate is mildly enlarged. Phleboliths are seen in the pelvis. Incidentally, there is a 3 cm simple cyst arising from the upper pole of the right kidney. Imaged bowel is unremarkable.
+IMPRESSION:
+1. Obstructing 6 mm left distal ureteric calculus with mild hydronephrosis.
+2. Simple right renal cyst, no follow-up required.
+Reporting radiologist: [fictional]

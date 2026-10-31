@@ -1,0 +1,10 @@
+FICTIONAL TEST REPORT
+ULTRASOUND ABDOMEN, UPPER
+Date of examination: 21/01/2025
+Clinical details: Right upper quadrant pain after meals, nausea.
+FINDINGS:
+The gallbladder is distended and contains multiple echogenic foci with posterior acoustic shadowing, the largest measuring 14 mm, consistent with gallstones. The gallbladder wall is mildly thickened at 4 mm. There is no pericholecystic fluid, and the sonographic Murphy sign is negative. The common bile duct measures 5 mm in calibre. The liver is normal in size with increased echogenicity, in keeping with fatty infiltration, and no focal lesion is seen. The pancreatic head and body are normal; the tail is obscured by bowel gas. The right kidney measures 10.8 cm and is normal. The spleen measures 9.6 cm. There is no free fluid.
+IMPRESSION:
+1. Cholelithiasis with mild gallbladder wall thickening, no definite acute cholecystitis.
+2. Fatty liver.
+Reporting radiologist: [fictional]

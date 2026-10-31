@@ -1,0 +1,11 @@
+FICTIONAL TEST REPORT
+CT CHEST, HIGH RESOLUTION
+Date of examination: 09/05/2025
+Clinical details: Chronic cough and breathlessness on exertion, ex-smoker.
+Technique: Supine inspiratory and expiratory volumetric acquisition, 1 mm reconstructions.
+FINDINGS:
+There is mild centrilobular emphysema, predominantly in the upper zones bilaterally. A solid nodule measuring 7 mm is seen in the right middle lobe, with smooth margins and no calcification. Two further subpleural nodules, each less than 4 mm, are present in the left lower lobe. There is no consolidation, ground glass opacity or interstitial thickening. No air trapping on expiratory images. The central airways are patent. No pleural effusion. The mediastinal lymph nodes are not enlarged, the largest subcarinal node measuring 9 mm in short axis. The heart size is normal. Visualised upper abdomen shows no abnormality.
+IMPRESSION:
+1. Mild upper zone emphysema.
+2. Indeterminate 7 mm right middle lobe nodule; follow-up CT in 3 months is suggested.
+Reporting radiologist: [fictional]
