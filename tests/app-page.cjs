@@ -128,8 +128,9 @@ function startApp({ stored = null, fetchDictionaries = false, compose, nav = {} 
     Tesseract: {},
     createTesseractEngine: () => ({}),
     createPaddleWorkerEngine: () => ({}),
-    createEngineWithFallback: () => ({
+    createEngineWithFallback: (primary, fallback, onFallback) => ({
       recognise: () => {
+        ocr.onFallback = onFallback;
         const d = deferred();
         ocr.runs.push(d);
         return d.promise;
@@ -227,6 +228,19 @@ async function main() {
     app.page.detects[1].resolve(null);
     await tick();
     assert.equal(app.$('status').textContent, NOT_FOUND);
+  }
+  // OpenCV that cannot load or run says straightening is unavailable, not "no edges".
+  {
+    const app = startApp();
+    await app.click('demo');
+    app.page.detects[0].reject(new Error('Page worker failed: importScripts failed'));
+    await tick();
+    assert.equal(
+      app.$('status').textContent,
+      'Page straightening is unavailable on this device; using the full photo.',
+    );
+    assert.equal(app.cornerEditor.shown, false);
+    assert.equal(app.$('extract').disabled, false);
   }
   // Rotating after detection has finished does not run it again.
   {
@@ -363,6 +377,61 @@ async function main() {
     await app.click('learnedClear');
     assert.equal(app.$('learnedCount').textContent, '0');
     assert.equal(app.storage.has(STORE), false);
+  }
+
+  // Engine confidences survive edits and chip taps: a correctly spelt word the engine was
+  // unsure of stays listed after the text changes, until a new result or Clear.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    const unsure = (t) => (t === 'effusion' || t === 'haemorhage' ? 0.4 : 0.95);
+    await scan(app, reportOf('Small effusion and no haemorhage today', unsure));
+    assert.ok(
+      rows(app).some((r) => r.text === 'effusion'),
+      'listed after extraction',
+    );
+    await type(app, 'Small effusion and no haemorhage today.');
+    assert.ok(
+      rows(app).some((r) => r.text === 'effusion'),
+      'a low-confidence known word stays listed after an edit',
+    );
+    rows(app)
+      .find((r) => r.text === 'haemorhage')
+      .chips[0].onclick();
+    assert.ok(
+      rows(app).some((r) => r.text === 'effusion'),
+      'and after a chip tap',
+    );
+    assert.equal(
+      rows(app).some((r) => r.text === 'today.'),
+      false,
+      'confident words are not listed',
+    );
+    // Clear forgets the result: text typed afterwards has no engine confidences.
+    await app.click('clear');
+    await type(app, 'Small effusion');
+    assert.equal(rows(app).length, 0, 'no confidences after Clear');
+  }
+  // Without dictionaries, low-confidence words also stay listed after an edit.
+  {
+    const app = startApp({ compose: composeText });
+    await scan(app, reportOf('No haemorhage seen', lowIf('haemor')));
+    await type(app, 'No haemorhage seen.');
+    assert.deepEqual(
+      rows(app).map((r) => r.text),
+      ['haemorhage'],
+    );
+  }
+
+  // The fallback notice does not blame the device.
+  {
+    const app = startApp();
+    await scan(app, reportOf('Plain text'));
+    app.ocr.onFallback(new Error('PaddleOCR worker stopped responding'));
+    assert.equal(
+      app.$('engineNotice').textContent,
+      'PaddleOCR could not start or stopped responding, so Tesseract was used.',
+    );
+    assert.equal(app.$('engineNotice').hidden, false);
   }
 
   // Learned corrections rank ahead of the dictionary.

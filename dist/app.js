@@ -17,6 +17,8 @@ const editor = new ParagraphCropEditor((value, commit) => {
 });
 // Page detection and straightening: OpenCV.js runs in page-worker.js, loaded after first paint.
 const PAGE_NOT_FOUND = 'Page edges not found; using the full photo.';
+const PAGE_TOOLS_UNAVAILABLE =
+  'Page straightening is unavailable on this device; using the full photo.';
 const pageTools = createPageWorker({ workerUrl: new URL('page-worker.js', location.href).href });
 let pageCorners = null,
   pageRun = 0, // detection results only apply to the photo they were run on
@@ -104,11 +106,13 @@ function offerCorners(corners) {
 async function detectPage() {
   const token = ++pageRun;
   detecting = true;
-  let found = null;
+  let found = null,
+    unavailable = false; // OpenCV could not load or run, as opposed to finding no page
   try {
     found = await pageTools.detect(canvas);
   } catch (e) {
     console.warn('Page detection failed', e);
+    unavailable = true;
   }
   if (token !== pageRun) return; // the photo changed; whatever changed it decides what next
   detecting = false;
@@ -117,7 +121,7 @@ async function detectPage() {
     return;
   }
   if (!found) {
-    status(PAGE_NOT_FOUND);
+    status(unavailable ? PAGE_TOOLS_UNAVAILABLE : PAGE_NOT_FOUND);
     return;
   }
   offerCorners(found);
@@ -300,7 +304,7 @@ $('scanMode').onchange = () => {
 // Engine choice: PaddleOCR by default, falling back to Tesseract if it cannot run here.
 const OFFLINE_CACHE = 'pocket-ocr-v5'; // keep equal to CACHE in sw.js (tests/offline-cache.cjs checks)
 const ENGINE_KEY = 'pocket-ocr-engine';
-const FALLBACK_NOTICE = 'PaddleOCR could not run on this device, so Tesseract was used.';
+const FALLBACK_NOTICE = 'PaddleOCR could not start or stopped responding, so Tesseract was used.';
 let paddleFailed = false; // once PaddleOCR fails, this tab keeps using Tesseract
 try {
   if (localStorage.getItem(ENGINE_KEY) === 'tesseract') $('engine').value = 'tesseract';
@@ -363,6 +367,7 @@ const NO_SUGGESTIONS = { isKnown: () => true, suggest: () => [] };
 let suggester = null, // null until the dictionaries have loaded
   suggesterLoad = null,
   checkRun = 0, // bumped when the result is cleared, so a late check is dropped
+  lastResult = null, // the engine result shown, for its word confidences; null once cleared
   checkItems = [],
   keptItems = new Set(),
   settledText = '', // the text as it was when edits last settled
@@ -479,9 +484,16 @@ function renderCheck() {
   $('checkNote').textContent =
     'Suggestions are unavailable, so unclear words are listed without them.';
 }
-function rebuildCheck(spans) {
+/* Rebuilds the list for the text as it is now. The engine's word confidences are placed on
+   the current text, edits included, so uncertain words stay listed after a change. */
+function rebuildCheck() {
+  const text = $('text').value;
+  let spans;
   try {
-    checkItems = buildCheckList($('text').value, { spans, suggester: suggester || NO_SUGGESTIONS });
+    spans = lastResult ? spansFromResult(lastResult, text) : undefined;
+  } catch (_) {} // no word confidences: only numbers, sides and units are listed
+  try {
+    checkItems = buildCheckList(text, { spans, suggester: suggester || NO_SUGGESTIONS });
   } catch (e) {
     console.warn('Check list failed', e);
     checkItems = [];
@@ -491,6 +503,7 @@ function rebuildCheck(spans) {
 function resetCheck() {
   checkRun++;
   clearTimeout(editTimer);
+  lastResult = null;
   checkItems = [];
   keptItems = new Set();
   settledText = '';
@@ -498,16 +511,11 @@ function resetCheck() {
 }
 async function showCheckAfterExtraction(result) {
   const id = checkRun;
-  const text = $('text').value;
-  settledText = text;
-  let spans;
-  try {
-    spans = spansFromResult(result, text);
-  } catch (_) {} // no word confidences: only numbers, sides and units are listed
+  lastResult = result;
+  settledText = $('text').value;
   await ensureSuggester();
   if (id !== checkRun) return;
-  // Spans fit the extracted text only; if it was edited while loading, they would misplace.
-  rebuildCheck($('text').value === text ? spans : undefined);
+  rebuildCheck();
 }
 /* A pause in typing: learn a single fixed word, then refresh the list. */
 function afterEdit() {
@@ -550,7 +558,7 @@ $('extract').onclick = async () => {
     if (token !== run) return;
     const { text, spans } = composeText(result);
     $('text').value = text.trim();
-    showCheckAfterExtraction(result);
+    showCheckAfterExtraction(result).catch((e) => console.warn('Check list failed', e));
     // Engines may omit an overall confidence; then use the mean word confidence.
     const confidence = Math.round(
       100 * (Number.isFinite(result.confidence) ? result.confidence : meanConfidence(spans)),
