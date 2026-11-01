@@ -1,6 +1,6 @@
 'use strict';
 // Scores OCR engines and pipeline variants against the fictional reports.
-//   node scripts/accuracy/run.cjs --engine tesseract|paddle|all --variant raw|clean|straight|suggest|all [--limit N]
+//   node scripts/accuracy/run.cjs --engine tesseract|paddle|all --variant raw|clean|straight|suggest|all [--limit N] [--thresholds 0.80,0.90]
 // To add an engine or a variant, register it in ENGINES or VARIANTS below.
 const fs = require('node:fs');
 const os = require('node:os');
@@ -8,6 +8,12 @@ const path = require('node:path');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const { pathToFileURL } = require('node:url');
 const { composeText, createTesseractEngine } = require('../../dist/engine.js');
+const {
+  createSuggester,
+  buildCheckList,
+  applySuggestion,
+  spansFromResult,
+} = require('../../dist/suggest.js');
 const { createPaddleEngine } = require('../../dist/engine-paddle.js');
 const { preparePhoto } = require('../../dist/prepare.js');
 const { findPageCorners, straighten } = require('../../dist/page.js');
@@ -53,6 +59,9 @@ const ENGINES = {
 };
 
 // A variant entry: prepare(buffer) returns { image: Buffer, mode } to hand to the engine.
+// Optional outputs(result, args) returns [{ name, text, reference? }] to score from one
+// recognition; the default is the composed text under the variant's own name. A reference
+// output is printed to the console but not written to the report.
 const make = () => createCanvas(1, 1);
 const photoVariant = (options) => ({
   implemented: true,
@@ -97,16 +106,41 @@ const VARIANTS = {
   clean: photoVariant({ background: true }),
   // Page detection and perspective straightening, then the clean variant.
   straight: straightVariant,
-  suggest: { implemented: false },
+  // Clean, then the top suggestion applied to every word the check list offers one for.
+  // Scored at each confidence threshold from the same recognition, next to clean itself.
+  suggest: {
+    ...photoVariant({ background: true }),
+    outputs: (result, args) => {
+      const root = path.join(ROOT, 'dist/dict');
+      const suggester = createSuggester({
+        english: fs.readFileSync(path.join(root, 'en-30k.txt'), 'utf8'),
+        medical: fs.readFileSync(path.join(root, 'medical-imaging.txt'), 'utf8'),
+        learned: { lookup: () => [] },
+      });
+      const { text } = composeText(result);
+      const spans = spansFromResult(result, text);
+      return [
+        { name: 'clean', text, reference: true },
+        ...args.thresholds.map((threshold) => {
+          let out = text;
+          const items = buildCheckList(text, { spans, threshold, suggester });
+          for (const item of items.filter((i) => i.kind === 'suggest').reverse())
+            out = applySuggestion(out, item, item.suggestions[0]) ?? out;
+          return { name: 'suggest@' + threshold.toFixed(2), text: out };
+        }),
+      ];
+    },
+  },
 };
 
 function parseArgs(argv) {
-  const args = { engine: 'all', variant: 'all', limit: Infinity };
+  const args = { engine: 'all', variant: 'all', limit: Infinity, thresholds: '0.80,0.90' };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, '');
     if (!(key in args) || argv[i + 1] === undefined) throw new Error('Unknown argument ' + argv[i]);
     args[key] = key === 'limit' ? Number(argv[i + 1]) : argv[i + 1];
   }
+  args.thresholds = args.thresholds.split(',').map(Number);
   return args;
 }
 
@@ -152,54 +186,130 @@ async function main() {
     const engine = await ENGINES[engineName].create();
     versions.push(`${engine.name} ${engine.version}`);
     for (const variantName of variants) {
-      const scores = {};
+      const variant = VARIANTS[variantName];
+      const scores = {}; // output name -> condition -> per-image scores
       for (const img of images) {
         const ref = fs.readFileSync(path.join(REPORTS, 'text', img.id + '.txt'), 'utf8');
         const started = Date.now();
-        const { image, mode } = await VARIANTS[variantName].prepare(fs.readFileSync(img.file));
-        const hyp = composeText(await engine.recognise(image, { mode })).text;
+        const { image, mode } = await variant.prepare(fs.readFileSync(img.file));
+        const result = await engine.recognise(image, { mode });
         const seconds = (Date.now() - started) / 1000;
-        (scores[img.condition] = scores[img.condition] || []).push({
-          cer: cer(ref, hyp),
-          wer: wer(ref, hyp),
-          num: numberAccuracy(ref, hyp),
-          seconds,
-        });
-        console.log(
-          `${engineName} ${variantName} ${img.id}-${img.condition} CER ${pct(cer(ref, hyp))} ${seconds.toFixed(1)}s`,
-        );
+        const outputs = variant.outputs
+          ? variant.outputs(result, args)
+          : [{ name: variantName, text: composeText(result).text }];
+        for (const out of outputs) {
+          const byCondition = (scores[out.name] = scores[out.name] || { conditions: {} });
+          byCondition.reference = out.reference;
+          (byCondition.conditions[img.condition] =
+            byCondition.conditions[img.condition] || []).push({
+            cer: cer(ref, out.text),
+            wer: wer(ref, out.text),
+            num: numberAccuracy(ref, out.text),
+            seconds,
+          });
+          console.log(
+            `${engineName} ${out.name} ${img.id}-${img.condition} CER ${pct(cer(ref, out.text))} ${seconds.toFixed(1)}s`,
+          );
+        }
       }
-      for (const [condition, s] of Object.entries(scores).sort(
-        (a, b) => CONDITIONS.indexOf(a[0]) - CONDITIONS.indexOf(b[0]),
-      ))
-        rows.push({
-          engineName,
-          variantName,
-          condition,
-          n: s.length,
-          worst: Math.max(...s.map((x) => x.cer)),
-          ...Object.fromEntries(
-            ['cer', 'wer', 'num', 'seconds'].map((k) => [k, mean(s.map((x) => x[k]))]),
-          ),
-        });
+      for (const [name, { conditions, reference }] of Object.entries(scores))
+        for (const [condition, s] of Object.entries(conditions).sort(
+          (x, y) => CONDITIONS.indexOf(x[0]) - CONDITIONS.indexOf(y[0]),
+        ))
+          rows.push({
+            engineName,
+            variantName: name,
+            reference,
+            condition,
+            n: s.length,
+            worst: Math.max(...s.map((x) => x.cer)),
+            ...Object.fromEntries(
+              ['cer', 'wer', 'num', 'seconds'].map((k) => [k, mean(s.map((x) => x[k]))]),
+            ),
+          });
     }
     await engine.terminate();
   }
+  const table = rows
+    .filter((r) => !r.reference)
+    .map((r) => [
+      r.engineName,
+      r.variantName,
+      r.condition,
+      r.n,
+      pct(r.cer),
+      pct(r.worst),
+      pct(r.wer),
+      pct(r.num),
+      r.seconds.toFixed(1),
+    ]);
+  console.log(
+    rows
+      .map((r) =>
+        [r.engineName, r.variantName, r.condition, pct(r.cer), pct(r.wer), pct(r.num)].join(' | '),
+      )
+      .join('\n'),
+  );
+  writeReport(table, versions, images);
+}
+
+const HEADER = [
+  'Engine',
+  'Variant',
+  'Condition',
+  'Images',
+  'Mean CER',
+  'Worst CER',
+  'Mean WER',
+  'Number accuracy',
+  'Seconds/page',
+];
+const isRow = (line) => line.startsWith('| ') && !line.startsWith('| Engine');
+const rowCells = (line) => line.slice(2, -2).split(' | ');
+// Rows sort by engine, then variant (suggest@ thresholds last), then condition.
+const rank = (list, value) => {
+  const i = list.indexOf(value);
+  return i < 0 ? list.length : i;
+};
+const rowOrder = (a, b) =>
+  rank(['tesseract', 'paddle'], a[0]) - rank(['tesseract', 'paddle'], b[0]) ||
+  rank(['raw', 'clean', 'straight'], a[1]) - rank(['raw', 'clean', 'straight'], b[1]) ||
+  a[1].localeCompare(b[1]) ||
+  rank(CONDITIONS, a[2]) - rank(CONDITIONS, b[2]);
+
+// Writes the table. Rows of an earlier run for the same engine and variant are replaced and
+// the rest are kept, so a partial run (one variant) updates the report instead of erasing it.
+// An existing report keeps its heading and notes.
+function writeReport(table, versions, images) {
+  const old = fs.existsSync(REPORT_FILE) ? fs.readFileSync(REPORT_FILE, 'utf8').split(/\r?\n/) : [];
+  const first = old.findIndex(isRow);
+  const last = old.length - 1 - [...old].reverse().findIndex(isRow);
+  const replaced = new Set(table.map((c) => c[0] + '|' + c[1]));
+  const kept =
+    first < 0
+      ? []
+      : old
+          .slice(first, last + 1)
+          .filter(isRow)
+          .map(rowCells);
+  const merged = [...kept.filter((c) => !replaced.has(c[0] + '|' + c[1])), ...table].sort(rowOrder);
+  const heading =
+    first < 0
+      ? [
+          '# OCR accuracy report',
+          '',
+          `Generated ${new Date().toISOString().slice(0, 10)} with ${versions.join(', ')}. ${images.length} images from ${new Set(images.map((i) => i.id)).size} fictional reports. Lower CER and WER are better; number accuracy is higher-is-better.`,
+          '',
+        ]
+      : old.slice(0, first - 2);
   const lines = [
-    '# OCR accuracy report',
-    '',
-    `Generated ${new Date().toISOString().slice(0, 10)} with ${versions.join(', ')}. ${images.length} images from ${new Set(images.map((i) => i.id)).size} fictional reports. Lower CER and WER are better; number accuracy is higher-is-better.`,
-    '',
-    '| Engine | Variant | Condition | Images | Mean CER | Worst CER | Mean WER | Number accuracy | Seconds/page |',
-    '|---|---|---|---|---|---|---|---|---|',
-    ...rows.map(
-      (r) =>
-        `| ${r.engineName} | ${r.variantName} | ${r.condition} | ${r.n} | ${pct(r.cer)} | ${pct(r.worst)} | ${pct(r.wer)} | ${pct(r.num)} | ${r.seconds.toFixed(1)} |`,
-    ),
-    '',
+    ...heading,
+    '| ' + HEADER.join(' | ') + ' |',
+    '|' + HEADER.map(() => '---').join('|') + '|',
+    ...merged.map((c) => '| ' + c.join(' | ') + ' |'),
+    ...(first < 0 ? [''] : old.slice(last + 1)),
   ];
   fs.writeFileSync(REPORT_FILE, lines.join('\n'));
-  console.log(lines.join('\n'));
 }
 
 main().then(
