@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'pocket-ocr-v4';
+const CACHE = 'pocket-ocr-v5';
 const assets = [
   './',
   'index.html',

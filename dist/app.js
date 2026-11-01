@@ -298,6 +298,7 @@ $('scanMode').onchange = () => {
   status('Reading mode changed. Extract again when ready.');
 };
 // Engine choice: PaddleOCR by default, falling back to Tesseract if it cannot run here.
+const OFFLINE_CACHE = 'pocket-ocr-v5'; // keep equal to CACHE in sw.js (tests/offline-cache.cjs checks)
 const ENGINE_KEY = 'pocket-ocr-engine';
 const FALLBACK_NOTICE = 'PaddleOCR could not run on this device, so Tesseract was used.';
 let paddleFailed = false; // once PaddleOCR fails, this tab keeps using Tesseract
@@ -690,9 +691,9 @@ if ('serviceWorker' in navigator) {
     .then(async (r) => {
       registration = r;
       await navigator.serviceWorker.ready;
-      const ready = await caches.has('pocket-ocr-v4');
+      const ready = await caches.has(OFFLINE_CACHE);
       if (ready) {
-        const c = await caches.open('pocket-ocr-v4');
+        const c = await caches.open(OFFLINE_CACHE);
         if (await c.match(new URL('offline-ready', location.href).href))
           $('offlineStatus').textContent =
             'Scanner files are cached. Test a fresh extraction in airplane mode.';

@@ -2,6 +2,19 @@
 
 Generated 2026-11-01 with tesseract 6.0.1, paddleocr 1.2.0 / PP-OCRv5 mobile (latin). 80 images from 20 fictional reports. Lower CER and WER are better; number accuracy is higher-is-better.
 
+## Summary
+
+The default pipeline is PaddleOCR with shadow removal (paddle + clean). Mean CER per condition against the spec's suggested targets (good at most 2%, average at most 5%); the owner sets the pass mark.
+
+| Condition | paddle + clean CER | Target | Result |
+|---|---|---|---|
+| good | 0.04% | 2% or less | within |
+| average | 0.04% | 5% or less | within |
+| fair | 0.15% | none set | |
+| poor | 42.81% | none set | |
+
+Rows below were last produced by the runs that changed them, and no code that affects OCR (prepare.js, page.js, engine.js, engine-paddle.js, suggest.js, the dictionaries) changed after the last of those runs, so they were kept rather than re-run. No phone photos are in the test set.
+
 | Engine | Variant | Condition | Images | Mean CER | Worst CER | Mean WER | Number accuracy | Seconds/page |
 |---|---|---|---|---|---|---|---|---|
 | tesseract | raw | good | 20 | 0.01% | 0.11% | 0.03% | 100.00% | 5.8 |
