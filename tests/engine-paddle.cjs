@@ -99,8 +99,12 @@ assert.equal(mapPaddleLines([], groupLinesIntoParagraphs).confidence, 0);
     [30, 20, 30 * 20 * 4],
     [30, 20, 30 * 20 * 4],
   ]);
-  assert.deepEqual(progress[0], { status: 'loading PaddleOCR', progress: 0 });
-  assert.deepEqual(progress[1], { status: 'recognizing text', progress: 0.5 });
+  assert.deepEqual(progress.slice(0, 4), [
+    { status: 'loading PaddleOCR', progress: 0 },
+    { status: 'starting PaddleOCR', progress: 0 },
+    { status: 'PaddleOCR ready', progress: 1 },
+    { status: 'recognizing text', progress: 0.5 },
+  ]);
   await engine.terminate();
   assert.equal(calls.destroy, 1);
 
@@ -142,6 +146,74 @@ assert.equal(mapPaddleLines([], groupLinesIntoParagraphs).confidence, 0);
     loadTimeoutMs: 20,
   });
   await assert.rejects(stalled.recognise(canvas, {}), /took too long to load/);
+  // initialize() that never settles after the downloads also times out.
+  const stuckStart = createPaddleEngine({
+    ort,
+    paddle: {
+      PaddleOcrService: class extends PaddleOcrService {
+        initialize() {
+          return new Promise(() => {});
+        }
+      },
+    },
+    modelUrls: { detection: 'det', recognition: 'rec', dictionary: 'dict' },
+    readFile: async (name) => new TextEncoder().encode(files[name]).buffer,
+    loadTimeoutMs: 20,
+  });
+  await assert.rejects(stuckStart.recognise(canvas, {}), /took too long to load/);
+
+  // A slow download that keeps arriving is not cut off by the load limit: each chunk
+  // resets it. Chunks every 10 ms for 80 ms, against a 30 ms limit.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const slowRead = async (name, onChunk) => {
+    const bytes = new TextEncoder().encode(files[name]);
+    for (let i = 1; i <= 8; i++) {
+      await wait(10);
+      onChunk({ received: i, total: 8 });
+    }
+    return bytes.buffer;
+  };
+  // The ONNX Runtime WASM, when given, is downloaded the same way and handed to the runtime,
+  // so it is not fetched again, without progress, inside initialize().
+  files.wasm = 'W';
+  const wasmOrt = { env: { wasm: {} } };
+  const downloadProgress = [];
+  const slowDownload = createPaddleEngine({
+    ort: wasmOrt,
+    paddle: library,
+    modelUrls: { detection: 'det', recognition: 'rec', dictionary: 'dict', wasm: 'wasm' },
+    readFile: slowRead,
+    loadTimeoutMs: 30,
+    onProgress: (m) => downloadProgress.push(m),
+  });
+  assert.equal(composeText(await slowDownload.recognise(canvas, {})).text, 'Hello world');
+  assert.equal(new TextDecoder().decode(wasmOrt.env.wasm.wasmBinary), 'W');
+  const statuses = downloadProgress.map((m) => m.status);
+  assert.ok(statuses.includes('downloading PaddleOCR'), statuses.join());
+  assert.ok(downloadProgress.some((m) => m.status === 'downloading PaddleOCR' && m.progress === 1));
+  // Loading ends with a message of its own, before any recognition progress.
+  assert.deepEqual(downloadProgress.at(-2), { status: 'PaddleOCR ready', progress: 1 });
+  await slowDownload.terminate();
+
+  // Text-line detection progress is forwarded, not only recognition.
+  const detProgress = [];
+  const detecting = createPaddleEngine({
+    ort,
+    paddle: {
+      PaddleOcrService: class extends PaddleOcrService {
+        async recognize(pixels, options) {
+          options.onProgress({ type: 'det', stage: 'infer', progress: { current: 2, total: 3 } });
+          return super.recognize(pixels, options);
+        }
+      },
+    },
+    modelUrls: { detection: 'det', recognition: 'rec', dictionary: 'dict' },
+    readFile: async (name) => new TextEncoder().encode(files[name]).buffer,
+    onProgress: (m) => detProgress.push(m),
+  });
+  await detecting.recognise(canvas, {});
+  assert.deepEqual(detProgress.at(-2), { status: 'finding text lines', progress: 2 / 3 });
+  await detecting.terminate();
 
   // Worker split: the page-side engine posts pixels to a worker running servePaddleWorker
   // and relays progress, results and errors. The fake worker passes messages in-process.
@@ -233,6 +305,44 @@ assert.equal(mapPaddleLines([], groupLinesIntoParagraphs).confidence, 0);
     watchdogMs: 30,
   });
   assert.equal((await slow.recognise(white)).confidence, 0.5);
+
+  // End to end through servePaddleWorker: a first job that downloads slowly, starts slowly and
+  // then spends a long time finding text lines (sending only detection progress) outlives a
+  // 100 ms watchdog (each stage takes 40 ms), because every stage keeps sending messages.
+  const slowStages = createPaddleWorkerEngine({
+    workerUrl: 'paddle-worker.js',
+    watchdogMs: 100,
+    createWorker: () =>
+      fakeWorkerPair((onProgress) =>
+        createPaddleEngine({
+          ort,
+          paddle: {
+            PaddleOcrService: class extends PaddleOcrService {
+              async initialize() {
+                await wait(40);
+              }
+              async recognize(pixels, options) {
+                for (let step = 1; step <= 3; step++) {
+                  await wait(40);
+                  options.onProgress({
+                    type: 'det',
+                    stage: 'step',
+                    progress: { current: step, total: 3 },
+                  });
+                }
+                await wait(40);
+                return ['raw'];
+              }
+            },
+          },
+          modelUrls: { detection: 'det', recognition: 'rec', dictionary: 'dict' },
+          readFile: slowRead,
+          onProgress,
+        }),
+      ),
+  });
+  assert.equal(composeText(await slowStages.recognise(white)).text, 'Hello world');
+  await slowStages.terminate();
 
   // A reply that cannot be deserialised rejects the pending call and stops the worker.
   const garbledWorker = { terminated: 0, terminate: () => garbledWorker.terminated++ };

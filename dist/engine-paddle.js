@@ -84,31 +84,52 @@
     };
   }
 
-  const fetchBytes = async (url) => {
+  // Reads a file in chunks, calling onChunk({ received, total }) after each one (total is 0
+  // when the server sends no length), so a slow but moving download can be told from a
+  // stalled one.
+  const fetchBytes = async (url, onChunk = () => {}) => {
     const response = await fetch(url);
     if (!response.ok) throw new Error('Could not load ' + url);
-    return response.arrayBuffer();
+    const total = Number(response.headers.get('content-length')) || 0;
+    if (!response.body || !response.body.getReader) {
+      const whole = await response.arrayBuffer();
+      onChunk({ received: whole.byteLength, total });
+      return whole;
+    }
+    const chunks = [];
+    let received = 0;
+    const reader = response.body.getReader();
+    for (let part = await reader.read(); !part.done; part = await reader.read()) {
+      chunks.push(part.value);
+      received += part.value.byteLength;
+      onChunk({ received, total });
+    }
+    const bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes.buffer;
   };
 
-  // Loading the runtime and 13 MB of models must finish in this time, or the engine
-  // reports an error (so the app falls back to Tesseract) instead of hanging.
+  // Loading the runtime and 13 MB of models must not stall for this long: the limit restarts
+  // with every downloaded chunk, and again when initialize() starts, which must then finish
+  // within it. Otherwise the engine reports an error (so the app falls back to Tesseract)
+  // instead of hanging.
   const PADDLE_LOAD_TIMEOUT_MS = 60000;
 
   // The page gives up on the PaddleOCR worker if it sends no message at all (progress
   // included) for this long while a job is waiting, so a hung or killed worker falls back.
+  // Downloading, starting, finding text lines and recognising each send progress.
   const PADDLE_WORKER_WATCHDOG_MS = 90000;
-
-  function withTimeout(promise, ms, message) {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(message)), ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-  }
 
   /* ort and paddle are the onnxruntime and paddleocr.js modules, or functions returning
      (promises of) them, so they are only loaded when first needed.
-     modelUrls = { detection, recognition, dictionary }; readFile(url) -> ArrayBuffer. */
+     modelUrls = { detection, recognition, dictionary, wasm? }; wasm is the ONNX Runtime WASM
+     binary, downloaded here (with progress) instead of by the runtime inside initialize().
+     readFile(url, onChunk) -> ArrayBuffer, calling onChunk({ received, total }) as the file
+     arrives (optional). */
   function createPaddleEngine({
     ort,
     paddle,
@@ -121,16 +142,35 @@
   }) {
     let service = null;
     const resolve = async (x) => (typeof x === 'function' ? x() : x);
-    async function start() {
-      const [ortModule, library, detection, recognition, dictionary] = await Promise.all([
+    const report = (status, progress) => {
+      if (onProgress) onProgress({ status, progress });
+    };
+    // restartLimit() restarts the load limit; called on every download chunk and before
+    // initialize(). It returns false once loading has finished or timed out.
+    async function start(restartLimit) {
+      const files = {}; // url -> { received, total }
+      const download = (url) =>
+        readFile(url, (chunk) => {
+          if (!restartLimit()) return;
+          files[url] = chunk;
+          const parts = Object.values(files);
+          const total = parts.reduce((sum, f) => sum + f.total, 0);
+          const received = parts.reduce((sum, f) => sum + f.received, 0);
+          report('downloading PaddleOCR', total ? Math.min(1, received / total) : 0);
+        });
+      const [ortModule, library, detection, recognition, dictionary, wasm] = await Promise.all([
         resolve(ort),
         resolve(paddle),
-        readFile(modelUrls.detection),
-        readFile(modelUrls.recognition),
-        readFile(modelUrls.dictionary),
+        download(modelUrls.detection),
+        download(modelUrls.recognition),
+        download(modelUrls.dictionary),
+        modelUrls.wasm ? download(modelUrls.wasm) : null,
       ]);
-      // One WASM thread: no SharedArrayBuffer, so no COOP/COEP headers are needed.
-      if (ortModule.env && ortModule.env.wasm) ortModule.env.wasm.numThreads = 1;
+      if (ortModule.env && ortModule.env.wasm) {
+        // One WASM thread: no SharedArrayBuffer, so no COOP/COEP headers are needed.
+        ortModule.env.wasm.numThreads = 1;
+        if (wasm) ortModule.env.wasm.wasmBinary = wasm;
+      }
       if (ortModule.env) ortModule.env.logLevel = 'error'; // hide model-graph warnings
       // The dictionary file lists the characters; PP-OCR appends the space character.
       const characters = new TextDecoder().decode(dictionary).split(/\r?\n/).filter(Boolean);
@@ -141,6 +181,8 @@
         detection: { modelBuffer: detection, ...DETECTION },
         recognition: { modelBuffer: recognition, charactersDictionary: characters },
       });
+      restartLimit();
+      report('starting PaddleOCR', 0);
       try {
         await ocr.initialize();
       } catch (error) {
@@ -150,21 +192,43 @@
       return ocr;
     }
     function load() {
-      const starting = start();
-      return withTimeout(starting, loadTimeoutMs, 'PaddleOCR took too long to load').catch(
-        (error) => {
-          // If loading completes after the timeout, release what it created.
-          starting.then((ocr) => ocr.destroy()).catch(() => {});
-          throw error;
-        },
-      );
+      let timer, expire;
+      let settled = false;
+      const expired = new Promise((_, reject) => (expire = reject));
+      const restartLimit = () => {
+        if (settled) return false;
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => expire(new Error('PaddleOCR took too long to load')),
+          loadTimeoutMs,
+        );
+        return true;
+      };
+      restartLimit();
+      const starting = start(restartLimit);
+      return Promise.race([starting, expired])
+        .finally(() => {
+          settled = true;
+          clearTimeout(timer);
+        })
+        .then(
+          (ocr) => {
+            report('PaddleOCR ready', 1);
+            return ocr;
+          },
+          (error) => {
+            // If loading completes after the timeout, release what it created.
+            starting.then((ocr) => ocr.destroy()).catch(() => {});
+            throw error;
+          },
+        );
     }
     return {
       name: 'paddleocr',
       version: PADDLE_VERSION,
       async recognise(image) {
         if (!service) {
-          if (onProgress) onProgress({ status: 'loading PaddleOCR', progress: 0 });
+          report('loading PaddleOCR', 0);
           service = load();
         }
         let ocr;
@@ -176,11 +240,11 @@
         }
         const results = await ocr.recognize(await toPixels(image), {
           onProgress(event) {
-            if (onProgress && event.type === 'rec' && event.progress.total)
-              onProgress({
-                status: 'recognizing text',
-                progress: event.progress.current / event.progress.total,
-              });
+            const { current, total } = event.progress || {};
+            if (!total) return;
+            // Detection runs first, then recognition line by line.
+            if (event.type === 'det') report('finding text lines', current / total);
+            else if (event.type === 'rec') report('recognizing text', current / total);
           },
         });
         const { lines } = ocr.processRecognition(results, { recognitionScoreThreshold: 0 });
