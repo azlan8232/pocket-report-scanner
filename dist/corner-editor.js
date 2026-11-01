@@ -56,9 +56,12 @@
     draw(corners) {
       this.corners = corners;
       this.polygon.setAttribute('points', corners.map((p) => `${p.x},${p.y}`).join(' '));
+      // The stage clips its content, so a corner on the photo edge keeps its whole handle
+      // inside (half the 32 px handle in from the edge); the outline still marks the corner.
+      const inside = (fraction) => `clamp(16px, ${fraction * 100}%, calc(100% - 16px))`;
       corners.forEach((p, i) => {
-        this.handles[i].style.left = (p.x / this.width) * 100 + '%';
-        this.handles[i].style.top = (p.y / this.height) * 100 + '%';
+        this.handles[i].style.left = inside(p.x / this.width);
+        this.handles[i].style.top = inside(p.y / this.height);
       });
     }
     down(e, index) {

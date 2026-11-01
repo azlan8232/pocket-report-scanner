@@ -30,3 +30,5 @@ Generated 2026-11-01 with tesseract 6.0.1, paddleocr 1.2.0 / PP-OCRv5 mobile (la
 | paddle | straight | poor | 20 | 49.29% | 55.99% | 85.61% | 21.88% | 13.8 |
 The straight rows come from a second run (`--variant straight`) after straightening switched to cubic interpolation. Seconds/page are not comparable between the two runs, because machine load differed.
 
+Straightening is opt-in: the app shows the detected corners and straightens only after the person taps Straighten page. On these mildly tilted fixtures it costs PaddleOCR accuracy: per image against clean, it is worse on fair 12 times (better 3, equal 5) and on poor 13 times (better 7). Known corners score the same as detected ones. The loss comes from resampling the page during the warp, not from detection.
+
