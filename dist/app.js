@@ -179,8 +179,7 @@ function showCanvas() {
     'Use a flat, sharp photo. Read one section at a time if the report has very small print.';
 }
 function resetResult() {
-  $('uncertain').hidden = true;
-  $('uncertainWords').textContent = '';
+  resetCheck();
   $('text').value = '';
   $('verified').checked = false;
   count();
@@ -351,6 +350,170 @@ function createEngine(choice) {
     $('engineNotice').hidden = false;
   });
 }
+/* Learned words and the Check panel. The dictionaries load after the first extraction, never at
+   page start; if they cannot load, the panel still lists what to verify, just without chips. */
+let learnedStorage = null;
+try {
+  learnedStorage = localStorage;
+} catch (_) {} // blocked storage: nothing is remembered
+const learned = createLearnedStore(learnedStorage, undefined, undefined, () => {
+  $('learnedNotice').hidden = false;
+});
+const NO_SUGGESTIONS = { isKnown: () => true, suggest: () => [] };
+let suggester = null, // null until the dictionaries have loaded
+  suggesterLoad = null,
+  checkRun = 0, // bumped when the result is cleared, so a late check is dropped
+  checkItems = [],
+  keptItems = new Set(),
+  settledText = '', // the text as it was when edits last settled
+  editTimer;
+function updateLearnedCount() {
+  $('learnedCount').textContent = 'Learned words: ' + learned.size();
+}
+updateLearnedCount();
+async function loadSuggester() {
+  const read = async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(url + ' ' + response.status);
+    return response.text();
+  };
+  const [english, medical] = await Promise.all([
+    read('dict/en-30k.txt'),
+    read('dict/medical-imaging.txt'),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 0)); // let the page paint before the build
+  return createSuggester({ english, medical, learned });
+}
+/* Builds the suggester once; after a failure the next extraction tries again. */
+function ensureSuggester() {
+  suggesterLoad ||= loadSuggester()
+    .then((built) => (suggester = built))
+    .catch((e) => {
+      console.warn('Suggestions unavailable', e);
+      suggesterLoad = null;
+      return null;
+    });
+  return suggesterLoad;
+}
+function kindLabel(item) {
+  const kind = item.kind === 'suggest' ? 'word' : classifyToken(item.text);
+  if (kind === 'laterality') return 'Check side';
+  return kind === 'word' || kind === 'other' ? 'Unclear word' : 'Check number';
+}
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function textChanged() {
+  status('Text changed; list refreshed');
+  rebuildCheck();
+}
+function selectItem(item) {
+  const box = $('text');
+  if (box.value.slice(item.start, item.end) !== item.text) return textChanged();
+  box.focus();
+  box.setSelectionRange(item.start, item.end);
+}
+function chooseSuggestion(item, replacement) {
+  const next = applySuggestion($('text').value, item, replacement);
+  if (next === null) return textChanged();
+  $('text').value = next;
+  settledText = next;
+  recordCorrection(item.text, replacement);
+  $('verified').checked = false;
+  count();
+  rebuildCheck();
+}
+/* Only a word fixed to a word the dictionaries know is kept: a corrected name or other
+   identifier must never be stored. */
+function recordCorrection(from, to) {
+  if (!suggester || classifyToken(from) !== 'word' || classifyToken(to) !== 'word') return;
+  if (!suggester.isKnown(to)) return;
+  learned.record(from, to);
+  updateLearnedCount();
+}
+function renderCheck() {
+  const seen = new Map();
+  const shown = checkItems.filter((item) => {
+    const n = (seen.get(item.text) || 0) + 1;
+    seen.set(item.text, n);
+    item.key = item.text + '#' + n; // the n-th time this exact text appears
+    return !keptItems.has(item.key);
+  });
+  const rows = shown.map((item) => {
+    const row = element('li', 'check-row');
+    const word = element('button', 'check-word', item.text);
+    word.type = 'button';
+    word.onclick = () => selectItem(item);
+    row.append(word, element('span', 'check-kind', kindLabel(item)));
+    for (const suggestion of item.suggestions.slice(0, 3)) {
+      const chip = element('button', 'chip', suggestion);
+      chip.type = 'button';
+      chip.onclick = () => chooseSuggestion(item, suggestion);
+      row.append(chip);
+    }
+    const keep = element('button', 'chip keep', 'Keep');
+    keep.type = 'button';
+    keep.onclick = () => {
+      keptItems.add(item.key);
+      renderCheck();
+    };
+    row.append(keep);
+    return row;
+  });
+  const label = shown.length + (shown.length === 1 ? ' item' : ' items') + ' to check';
+  $('checkList').replaceChildren(...rows);
+  $('check').hidden = !shown.length;
+  $('checkSummary').textContent = label;
+  $('checkCount').textContent = shown.length ? label : '';
+  $('checkNote').hidden = !!suggester || !shown.length;
+  $('checkNote').textContent =
+    'Suggestions are unavailable, so unclear words are listed without them.';
+}
+function rebuildCheck(spans) {
+  try {
+    checkItems = buildCheckList($('text').value, { spans, suggester: suggester || NO_SUGGESTIONS });
+  } catch (e) {
+    console.warn('Check list failed', e);
+    checkItems = [];
+  }
+  renderCheck();
+}
+function resetCheck() {
+  checkRun++;
+  clearTimeout(editTimer);
+  checkItems = [];
+  keptItems = new Set();
+  settledText = '';
+  renderCheck();
+}
+async function showCheckAfterExtraction(result) {
+  const id = checkRun;
+  const text = $('text').value;
+  settledText = text;
+  let spans;
+  try {
+    spans = spansFromResult(result, text);
+  } catch (_) {} // no word confidences: only numbers, sides and units are listed
+  await ensureSuggester();
+  if (id !== checkRun) return;
+  rebuildCheck(spans);
+}
+/* A pause in typing: learn a single fixed word, then refresh the list. */
+function afterEdit() {
+  const now = $('text').value;
+  const fix = detectWordCorrection(settledText, now);
+  settledText = now;
+  if (fix) recordCorrection(fix.from, fix.to);
+  rebuildCheck();
+}
+$('learnedClear').onclick = () => {
+  learned.clear();
+  updateLearnedCount();
+  rebuildCheck();
+};
 const meanConfidence = (spans) =>
   spans.length ? spans.reduce((sum, s) => sum + s.confidence, 0) / spans.length : 0;
 $('extract').onclick = async () => {
@@ -372,17 +535,7 @@ $('extract').onclick = async () => {
     if (token !== run) return;
     const { text, spans } = composeText(result);
     $('text').value = text.trim();
-    const uncertain = spans.filter((s) => s.confidence < 0.7 && s.text.trim());
-    if (uncertain.length) {
-      $('uncertain').hidden = false;
-      $('uncertainSummary').textContent =
-        uncertain.length + ' uncertain words — check against image';
-      $('uncertainWords').textContent =
-        uncertain
-          .slice(0, 100)
-          .map((s) => s.text)
-          .join(' · ') + (uncertain.length > 100 ? ' · …' : '');
-    }
+    showCheckAfterExtraction(result);
     // Engines may omit an overall confidence; then use the mean word confidence.
     const confidence = Math.round(
       100 * (Number.isFinite(result.confidence) ? result.confidence : meanConfidence(spans)),
@@ -416,6 +569,8 @@ $('extract').onclick = async () => {
 $('text').oninput = () => {
   $('verified').checked = false;
   count();
+  clearTimeout(editTimer);
+  editTimer = setTimeout(afterEdit, 300);
 };
 $('verified').onchange = count;
 $('copy').onclick = async () => {

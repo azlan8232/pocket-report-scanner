@@ -10,6 +10,7 @@ const assets = [
   'engine-paddle.js',
   'symspell.js',
   'suggest.js',
+  'learned.js',
   'dict/medical-imaging.txt',
   'dict/en-30k.txt',
   'paddle-worker.js',

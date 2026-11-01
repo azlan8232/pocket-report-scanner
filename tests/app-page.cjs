@@ -7,6 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createCanvas } = require('@napi-rs/canvas');
 const prepare = require('../dist/prepare.js');
+const suggest = require('../dist/suggest.js');
+const { createLearnedStore } = require('../dist/learned.js');
 
 function deferred() {
   let resolve, reject;
@@ -20,7 +22,7 @@ function element(id) {
   return {
     id,
     disabled: false,
-    hidden: id === 'pageActions' || id === 'imageArea',
+    hidden: ['pageActions', 'imageArea', 'learnedNotice', 'check', 'checkNote'].includes(id),
     textContent: '',
     value: { engine: 'paddle', scanMode: 'photo' }[id] || '',
     checked: false,
@@ -32,22 +34,44 @@ function element(id) {
       toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
       contains: (c) => classes.has(c),
     },
+    children: [],
+    focused: 0,
+    selection: null,
     setAttribute() {},
     removeAttribute() {},
     addEventListener() {},
-    focus() {},
+    append(...nodes) {
+      this.children.push(...nodes);
+    },
+    replaceChildren(...nodes) {
+      this.children = nodes;
+    },
+    focus() {
+      this.focused++;
+    },
+    setSelectionRange(start, end) {
+      this.selection = [start, end];
+    },
     select() {},
     click() {},
   };
 }
 
-function startApp() {
+function startApp({ stored = null, fetchDictionaries = false, compose } = {}) {
   const elements = new Map();
   const $ = (id) => elements.get(id) || elements.set(id, element(id)).get(id);
   const page = { detects: [], straightens: [] };
   const ocr = { runs: [] };
   const cornerEditor = { shown: false };
+  const storage = new Map(stored === null ? [] : [['pocket-ocr-learned-v1', stored]]);
   const context = {
+    ...suggest,
+    createLearnedStore,
+    fetch: async (url) => {
+      if (!fetchDictionaries) throw new Error('offline');
+      const file = path.join(__dirname, '../dist', url);
+      return { ok: true, text: async () => fs.readFileSync(file, 'utf8') };
+    },
     console: { warn() {}, log: console.log, error: console.error },
     setTimeout,
     clearTimeout,
@@ -56,7 +80,11 @@ function startApp() {
     Promise,
     location: { href: 'http://localhost/' },
     navigator: {},
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: (k) => storage.delete(k),
+    },
     requestAnimationFrame: (f) => setTimeout(f, 0),
     addEventListener() {},
     document: {
@@ -106,7 +134,7 @@ function startApp() {
       },
       terminate: async () => {},
     }),
-    composeText: () => ({ text: 'No acute abnormality.', spans: [] }),
+    composeText: compose || (() => ({ text: 'No acute abnormality.', spans: [] })),
   };
   context.window = context;
   vm.createContext(context);
@@ -116,7 +144,7 @@ function startApp() {
     await $(id).onclick();
     await tick();
   };
-  return { $, page, ocr, cornerEditor, click };
+  return { $, page, ocr, cornerEditor, click, storage };
 }
 
 const NOT_FOUND = 'Page edges not found; using the full photo.';
@@ -236,6 +264,207 @@ async function main() {
     assert.equal(app.cornerEditor.shown, false);
     assert.match(app.$('status').textContent, /^Extraction complete/);
   }
+
+  // The Check panel, learned words and the review gate.
+  const { composeText } = require('../dist/engine.js');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reportOf = (line, confidence = 0.95) => ({
+    confidence: 0.9,
+    paragraphs: [
+      {
+        lines: [
+          {
+            words: line.split(' ').map((text) => ({
+              text,
+              confidence: typeof confidence === 'function' ? confidence(text) : confidence,
+            })),
+          },
+        ],
+      },
+    ],
+  });
+  const scan = async (app, result) => {
+    await app.click('demo');
+    app.click('extract');
+    await sleep(40);
+    app.ocr.runs[0].resolve(result);
+    await sleep(60);
+  };
+  // Each row of the list: its word, kind label and chip labels.
+  const rows = (app) =>
+    app.$('checkList').children.map((li) => {
+      const [word, kind, ...rest] = li.children;
+      return {
+        word,
+        text: word.textContent,
+        kind: kind.textContent,
+        chips: rest.filter((c) => c.className.includes('chip') && !c.className.includes('keep')),
+        keep: rest.find((c) => c.className.includes('keep')),
+      };
+    });
+  const type = async (app, value) => {
+    app.$('text').value = value;
+    app.$('text').oninput();
+    await sleep(380);
+  };
+  const lowIf = (prefix) => (t) => (t.startsWith(prefix) ? 0.5 : 0.95);
+  const STORE = 'pocket-ocr-learned-v1';
+
+  // A misread word gets chips; numbers are only flagged; the tick stays required; a chip
+  // changes the text, clears the tick and teaches the scanner.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('No acute intracranial haemorhage. Size 3.2 cm.', lowIf('haemor')));
+    const list = rows(app);
+    const word = list.find((r) => r.text === 'haemorhage');
+    assert.equal(word.kind, 'Unclear word');
+    assert.deepEqual(
+      word.chips.map((c) => c.textContent),
+      ['haemorrhage', 'hemorrhage'],
+    );
+    assert.ok(word.keep, 'Keep is offered');
+    assert.equal(list.find((r) => r.text === '3.2').kind, 'Check number');
+    assert.equal(list.find((r) => r.text === '3.2').chips.length, 0, 'numbers are never guessed');
+    assert.equal(app.$('checkCount').textContent, '3 items to check');
+    assert.equal(app.$('copy').disabled, true, 'the review tick is still required');
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    assert.equal(app.$('copy').disabled, false);
+    // Tapping the word selects it in the text.
+    const value = app.$('text').value;
+    const at = value.indexOf('haemorhage');
+    word.word.onclick();
+    assert.deepEqual(app.$('text').selection, [at, at + 10]);
+    assert.ok(app.$('text').focused > 0);
+    // Tapping the chip applies it; before that nothing changed.
+    assert.equal(app.$('text').value, value, 'nothing is applied without a tap');
+    word.chips[0].onclick();
+    assert.equal(app.$('text').value, value.replace('haemorhage', 'haemorrhage'));
+    assert.equal(app.$('verified').checked, false, 'review is unticked');
+    assert.equal(app.$('copy').disabled, true);
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+    assert.equal(
+      rows(app).some((r) => r.text === 'haemorrhage'),
+      false,
+    );
+    assert.equal(app.$('checkCount').textContent, '2 items to check');
+    // Typing the misspelling again: the learned word is offered.
+    await type(app, value);
+    assert.deepEqual(
+      rows(app)
+        .find((r) => r.text === 'haemorhage')
+        .chips.map((c) => c.textContent),
+      ['haemorrhage', 'hemorrhage'],
+    );
+    assert.equal(JSON.parse(app.storage.get(STORE)).haemorhage.haemorrhage, 1);
+    // Clear empties the store and the count.
+    await app.click('learnedClear');
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(app.storage.has(STORE), false);
+  }
+
+  // Learned corrections rank ahead of the dictionary.
+  {
+    const app = startApp({
+      fetchDictionaries: true,
+      compose: composeText,
+      stored: JSON.stringify({ efusion: { infusion: 3 } }),
+    });
+    await scan(app, reportOf('small pleural efusion', lowIf('efusion')));
+    const chips = rows(app)
+      .find((r) => r.text === 'efusion')
+      .chips.map((c) => c.textContent);
+    assert.equal(chips[0], 'infusion');
+    assert.ok(chips.includes('effusion'));
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+  }
+
+  // A correction to a word the dictionaries do not know (a surname) is never stored.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('Seen by Zxqvlorp today'));
+    await type(app, 'Seen by Hartwellmoor today');
+    assert.equal(app.storage.has(STORE), false, 'unknown target is not recorded');
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    // A known word typed in as the fix is recorded (single word only).
+    await type(app, 'Seen by Zxqvlorp today');
+    await type(app, 'Seen by doctor today');
+    assert.deepEqual(JSON.parse(app.storage.get(STORE)), { zxqvlorp: { doctor: 1 } });
+    // Changing two words at once is not a single-word correction.
+    await type(app, 'Seen by nurse yesterday');
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+  }
+
+  // A stale list is refreshed instead of applying a chip to the wrong place.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('No haemorhage seen', lowIf('haemor')));
+    const row = rows(app).find((r) => r.text === 'haemorhage');
+    app.$('text').value = 'XX No haemorhage seen';
+    row.chips[0].onclick();
+    assert.equal(app.$('text').value, 'XX No haemorhage seen', 'text untouched');
+    assert.equal(app.$('status').textContent, 'Text changed; list refreshed');
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(
+      rows(app).find((r) => r.text === 'haemorhage').chips.length > 0,
+      true,
+      'list rebuilt',
+    );
+  }
+
+  // Keep dismisses an item for this report.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('Size 3.2 cm'));
+    assert.equal(rows(app).length, 2);
+    rows(app)[0].keep.onclick();
+    assert.equal(rows(app).length, 1);
+    assert.equal(app.$('checkCount').textContent, '1 item to check');
+  }
+
+  // Dictionaries that cannot load: items still listed, no chips, a note; review not blocked.
+  {
+    const app = startApp({ compose: composeText });
+    await scan(app, reportOf('No haemorhage 5 mm', lowIf('haemor')));
+    const list = rows(app);
+    assert.deepEqual(
+      list.map((r) => r.text),
+      ['haemorhage', '5', 'mm'],
+    );
+    assert.equal(
+      list.every((r) => r.chips.length === 0),
+      true,
+    );
+    assert.equal(app.$('checkNote').hidden, false);
+    assert.match(app.$('checkNote').textContent, /unavailable/i);
+    assert.match(app.$('status').textContent, /^Extraction complete/);
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    assert.equal(app.$('copy').disabled, false);
+    // Corrections are never learned without a dictionary to vouch for them.
+    await type(app, 'No haemorrhage 5 mm');
+    assert.equal(app.storage.has(STORE), false);
+  }
+
+  // Corrupt stored words reset with a visible notice and do not stop scanning.
+  {
+    const app = startApp({ stored: '{bad', compose: composeText });
+    assert.equal(app.$('learnedNotice').hidden, false);
+    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    await scan(app, reportOf('Plain text'));
+    assert.match(app.$('status').textContent, /^Extraction complete/);
+  }
+
+  // Clearing the result hides the panel and the count.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('Size 3.2 cm'));
+    assert.equal(app.$('check').hidden, false);
+    await app.click('clear');
+    assert.equal(app.$('check').hidden, true);
+    assert.equal(app.$('checkCount').textContent, '');
+  }
+
   console.log('app page-flow tests passed');
 }
 
