@@ -185,7 +185,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 `;
 
-vendorPaddle().then(
+// opencv.js's WASM bundles third-party code; its embedded build information lists
+// "3rdparty dependencies: zlib libprotobuf" (zlib 1.3.1, protobuf 3.19.1) and Flatbuffers
+// 23.5.9 (Apache-2.0, the same text as LICENSE-opencv.txt). Their notices come from the
+// OpenCV 4.12.0 source tree.
+const OPENCV_NOTICES = {
+  zlib: {
+    url: 'https://raw.githubusercontent.com/opencv/opencv/4.12.0/3rdparty/zlib/LICENSE',
+    sha256: '845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243',
+  },
+  protobuf: {
+    url: 'https://raw.githubusercontent.com/opencv/opencv/4.12.0/3rdparty/protobuf/LICENSE',
+    sha256: '6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d',
+  },
+};
+
+async function vendorOpenCvNotices() {
+  const [zlib, protobuf] = await Promise.all(Object.values(OPENCV_NOTICES).map(download));
+  fs.writeFileSync(
+    path.join(vendor, 'ThirdPartyNotices-opencv.txt'),
+    'opencv.js (OpenCV 4.12.0) includes the following third-party code.\n\n' +
+      '== zlib 1.3.1 ==\n\n' +
+      zlib +
+      '\n== Protocol Buffers 3.19.1 ==\n\n' +
+      protobuf +
+      '\n== FlatBuffers 23.5.9 ==\n\n' +
+      'Licensed under the Apache License 2.0; see LICENSE-opencv.txt for the text.\n',
+  );
+}
+
+Promise.all([vendorPaddle(), vendorOpenCvNotices()]).then(
   () => console.log('Pinned OCR engines, models and language files ready in dist/vendor.'),
   (err) => {
     console.error(err.message);

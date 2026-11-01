@@ -5,7 +5,13 @@
   'use strict';
   const DETECT_MAX_SIDE = 1000; // detection runs on at most this many pixels on the long side
   const MIN_PAGE_AREA = 0.25; // a page must cover at least this share of the image
-  const PAGE_WORKER_TIMEOUT_MS = 120000; // loading 10 MB of OpenCV on a slow phone, then the job
+  // The worker is stopped after this long with nothing from it: no load progress, no answer.
+  const PAGE_WORKER_IDLE_MS = 30000;
+  // A straighten job must finish this long after the worker starts it; the UI waits on it.
+  const STRAIGHTEN_TIMEOUT_MS = 20000;
+  // Photos are scaled to at most this long side before warping, so a 16 MP photo does not put
+  // 64 MB of pixels (and as much again for the output) into the WASM heap.
+  const WARP_MAX_SIDE = 4000;
 
   // [tl, tr, br, bl]: top-left has the smallest x+y, bottom-right the largest; top-right has
   // the smallest y−x, bottom-left the largest.
@@ -134,16 +140,35 @@
     return out;
   }
 
-  const sourcePixels = (canvas) =>
-    canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  // The pixels and corners to warp, scaled down first when the long side is over WARP_MAX_SIDE.
+  function warpInput(canvas, corners, make) {
+    const scale = Math.min(1, WARP_MAX_SIDE / Math.max(canvas.width, canvas.height));
+    let source = canvas;
+    if (scale < 1) {
+      source = make();
+      source.width = Math.round(canvas.width * scale);
+      source.height = Math.round(canvas.height * scale);
+      const ctx = source.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(canvas, 0, 0, source.width, source.height);
+    }
+    return {
+      pixels: source.getContext('2d').getImageData(0, 0, source.width, source.height),
+      corners: corners.map((p) => ({ x: p.x * scale, y: p.y * scale })),
+    };
+  }
 
   function straighten(cv, canvas, corners, make = () => document.createElement('canvas')) {
-    return toCanvas(warpPixels(cv, sourcePixels(canvas), corners), make);
+    const input = warpInput(canvas, corners, make);
+    return toCanvas(warpPixels(cv, input.pixels, input.corners), make);
   }
 
   /* Worker side: answers { id, type: 'load' | 'detect' | 'straighten', pixels, corners }
-     one job at a time. loadCv() resolves to { cv } (never to cv itself: it is a thenable
-     that never settles) once the OpenCV runtime is ready. */
+     one job at a time. loadCv(onProgress) resolves to { cv } (never to cv itself: it is a
+     thenable that never settles) once the OpenCV runtime is ready, calling onProgress while
+     it downloads. Replies: 'progress' while loading, 'started' when the job itself begins,
+     then 'result' or 'error'. */
   function servePageWorker(scope, loadCv) {
     let ready = null;
     let queue = Promise.resolve();
@@ -151,7 +176,9 @@
       const { id, type, pixels, corners } = event.data || {};
       queue = queue.then(async () => {
         try {
-          const { cv } = await (ready = ready || loadCv());
+          const onProgress = () => scope.postMessage({ id, type: 'progress' });
+          const { cv } = await (ready = ready || loadCv(onProgress));
+          scope.postMessage({ id, type: 'started' });
           if (type === 'load') scope.postMessage({ id, type: 'result' });
           if (type === 'detect')
             scope.postMessage({ id, type: 'result', corners: detectCornersInPixels(cv, pixels) });
@@ -172,25 +199,36 @@
 
   /* Page side. load() starts OpenCV early; detect(canvas) → corners in source pixels or null;
      straighten(canvas, corners) → a new canvas. Each rejects if OpenCV cannot load or run
-     (old phone, out of memory); the worker is then stopped and the next call starts afresh. */
+     (old phone, out of memory); the worker is then stopped and the next call starts afresh.
+     Two limits stop a stuck worker: idleMs with no message at all (a stalled download sends
+     nothing; a slow one keeps sending progress), and straightenMs from the moment the worker
+     starts a straighten job. */
   function createPageWorker({
     workerUrl,
     createWorker = (url) => new Worker(url),
     make = () => document.createElement('canvas'),
-    timeoutMs = PAGE_WORKER_TIMEOUT_MS,
+    idleMs = PAGE_WORKER_IDLE_MS,
+    straightenMs = STRAIGHTEN_TIMEOUT_MS,
   }) {
     let worker = null;
     let nextId = 0;
+    let watchdog = null;
     const pending = new Map();
     function abandon(error) {
       const failed = worker;
       worker = null;
       if (failed) failed.terminate();
+      clearTimeout(watchdog);
       for (const { reject, timer } of pending.values()) {
         clearTimeout(timer);
         reject(error);
       }
       pending.clear();
+    }
+    function armWatchdog() {
+      clearTimeout(watchdog);
+      if (pending.size)
+        watchdog = setTimeout(() => abandon(new Error('Page worker stopped responding')), idleMs);
     }
     function ensureWorker() {
       if (worker) return worker;
@@ -198,10 +236,21 @@
       worker.onmessage = ({ data }) => {
         const entry = pending.get(data.id);
         if (!entry) return;
+        armWatchdog();
+        if (data.type === 'progress') return;
+        if (data.type === 'started') {
+          if (entry.jobMs)
+            entry.timer = setTimeout(
+              () => abandon(new Error('Page worker took too long')),
+              entry.jobMs,
+            );
+          return;
+        }
         // After a failure (often out of memory) OpenCV may be unusable: stop this worker.
         if (data.type !== 'result') return abandon(new Error(data.message));
         pending.delete(data.id);
         clearTimeout(entry.timer);
+        armWatchdog(); // stops it when nothing is left waiting
         entry.resolve(data);
       };
       worker.onmessageerror = () => abandon(new Error('A page worker reply could not be read'));
@@ -211,15 +260,13 @@
       };
       return worker;
     }
-    function ask(message, transfer = []) {
+    // jobMs: a time limit for the job itself, counted from the worker's 'started' reply.
+    function ask(message, transfer = [], jobMs = 0) {
       return new Promise((resolve, reject) => {
         const id = ++nextId;
-        const timer = setTimeout(
-          () => abandon(new Error('Page worker stopped responding')),
-          timeoutMs,
-        );
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { resolve, reject, jobMs, timer: null });
         ensureWorker().postMessage({ id, ...message }, transfer);
+        armWatchdog();
       });
     }
     return {
@@ -232,8 +279,12 @@
         return corners && corners.map((p) => ({ x: p.x / scale, y: p.y / scale }));
       },
       async straighten(canvas, corners) {
-        const pixels = sourcePixels(canvas);
-        const { page } = await ask({ type: 'straighten', pixels, corners }, [pixels.data.buffer]);
+        const input = warpInput(canvas, corners, make);
+        const { page } = await ask(
+          { type: 'straighten', pixels: input.pixels, corners: input.corners },
+          [input.pixels.data.buffer],
+          straightenMs,
+        );
         return toCanvas(page, make);
       },
       async terminate() {
@@ -249,6 +300,9 @@
     straighten,
     servePageWorker,
     createPageWorker,
+    PAGE_WORKER_IDLE_MS,
+    STRAIGHTEN_TIMEOUT_MS,
+    WARP_MAX_SIDE,
   };
   Object.assign(root, api);
   if (typeof module !== 'undefined') module.exports = api;

@@ -19,7 +19,11 @@ const editor = new ParagraphCropEditor((value, commit) => {
 const PAGE_NOT_FOUND = 'Page edges not found; using the full photo.';
 const pageTools = createPageWorker({ workerUrl: new URL('page-worker.js', location.href).href });
 let pageCorners = null,
-  pageRun = 0; // detection results only apply to the photo they were run on
+  pageRun = 0, // detection results only apply to the photo they were run on
+  detecting = false, // a detection is running for the current photo
+  heldCorners = null, // corners found during an extraction, offered once it ends
+  straightenRun = 0, // the straighten request in flight (0: none)
+  straightenCount = 0;
 const cornerEditor = new CornerEditor($('cropStage'), (corners) => (pageCorners = corners));
 function updateSelectionPreview() {
   if (!canvas) return;
@@ -76,6 +80,12 @@ function lock(value) {
   $('text').readOnly = value;
   $('verified').disabled = value;
   count();
+  if (!value && heldCorners) {
+    // Shown without replacing the extraction's status; the page actions box explains them.
+    const corners = heldCorners;
+    heldCorners = null;
+    offerCorners(corners);
+  }
 }
 function hidePageCorners() {
   cornerEditor.hide();
@@ -90,29 +100,49 @@ function offerCorners(corners) {
   $('pageActions').hidden = false;
 }
 // Finds the page in the current photo and offers its corners; never blocks scanning.
+// A result that arrives during an extraction is held: found corners are offered when the
+// extraction ends; "not found" is dropped, as that extraction already used the full photo.
 async function detectPage() {
   const token = ++pageRun;
+  detecting = true;
+  let found = null;
   try {
-    const found = await pageTools.detect(canvas);
-    if (token !== pageRun || busy) return;
-    if (!found) {
-      status(PAGE_NOT_FOUND);
-      return;
-    }
-    offerCorners(found);
-    status('Page edges found. Adjust the corners, then tap Straighten page or Skip.');
+    found = await pageTools.detect(canvas);
   } catch (e) {
     console.warn('Page detection failed', e);
-    if (token === pageRun && !busy) status(PAGE_NOT_FOUND);
   }
+  if (token !== pageRun) return; // the photo changed; whatever changed it decides what next
+  detecting = false;
+  if (busy) {
+    heldCorners = found;
+    return;
+  }
+  if (!found) {
+    status(PAGE_NOT_FOUND);
+    return;
+  }
+  offerCorners(found);
+  status('Page edges found. Adjust the corners, then tap Straighten page or Skip.');
+}
+// Lets Skip and Clear end a straighten that is still running; its result is then ignored.
+function cancelStraighten() {
+  if (!straightenRun) return;
+  straightenRun = 0;
+  lock(false);
 }
 $('straighten').onclick = async () => {
   if (!canvas || busy || !pageCorners) return;
   const source = canvas;
+  const token = (straightenRun = ++straightenCount);
   lock(true);
+  // Skip and Clear stay usable, so a slow straighten never traps the person.
+  $('skipStraighten').disabled = false;
+  $('clear').disabled = false;
   status('Straightening the page on your device…');
   try {
-    canvas = await pageTools.straighten(source, pageCorners);
+    const flat = await pageTools.straighten(source, pageCorners);
+    if (token !== straightenRun) return;
+    canvas = flat;
     source.width = source.height = 1; // free the unstraightened photo now
     resetResult();
     showCanvas(); // resets the crop and recomputes the photo warnings
@@ -120,19 +150,25 @@ $('straighten').onclick = async () => {
       `${canvas.width} × ${canvas.height} pixels · straightened page · image held in this tab only`;
     status('Page straightened. Select a paragraph, then tap Transcribe selected section.');
   } catch (e) {
+    if (token !== straightenRun) return;
     console.warn('Straightening failed', e);
     hidePageCorners();
     status(PAGE_NOT_FOUND);
   } finally {
-    lock(false);
+    if (token === straightenRun) {
+      straightenRun = 0;
+      lock(false);
+    }
   }
 };
 $('skipStraighten').onclick = () => {
+  cancelStraighten();
   hidePageCorners();
   status('Using the full photo. Select a paragraph, then tap Transcribe selected section.');
 };
 function showCanvas() {
   ++pageRun; // a new or changed photo cancels any page detection still running
+  heldCorners = null;
   hidePageCorners();
   $('preview').src = canvas.toDataURL('image/jpeg', 0.9);
   $('empty').hidden = true;
@@ -206,6 +242,7 @@ $('rotate').onclick = () => {
   if (!canvas) return;
   // Corners being placed turn with the photo: (x, y) → (old height − y, x).
   const turned = pageCorners && pageCorners.map((p) => ({ x: canvas.height - p.y, y: p.x }));
+  const redetect = detecting; // rotating cancels a running detection, so run it again
   const rotated = document.createElement('canvas');
   rotated.width = canvas.height;
   rotated.height = canvas.width;
@@ -216,8 +253,9 @@ $('rotate').onclick = () => {
   canvas = rotated;
   resetResult();
   showCanvas();
-  if (turned) offerCorners(turned);
   status('Image rotated. Extract again when ready.');
+  if (turned) offerCorners(turned);
+  else if (redetect) detectPage();
 };
 function resetCrop() {
   for (const edge of ['left', 'top', 'right', 'bottom']) {
@@ -401,8 +439,11 @@ $('download').onclick = () => {
   status('Text file created. Your browser handles saving it.');
 };
 $('clear').onclick = () => {
+  cancelStraighten();
   ++run;
   ++pageRun;
+  detecting = false;
+  heldCorners = null;
   hidePageCorners();
   canvas = null;
   $('preview').removeAttribute('src');
