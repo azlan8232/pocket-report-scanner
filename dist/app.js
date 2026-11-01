@@ -15,6 +15,12 @@ const editor = new ParagraphCropEditor((value, commit) => {
   if (commit) updateSelectionPreview();
   else previewTimer = setTimeout(updateSelectionPreview, 180);
 });
+// Page detection and straightening: OpenCV.js runs in page-worker.js, loaded after first paint.
+const PAGE_NOT_FOUND = 'Page edges not found; using the full photo.';
+const pageTools = createPageWorker({ workerUrl: new URL('page-worker.js', location.href).href });
+let pageCorners = null,
+  pageRun = 0; // detection results only apply to the photo they were run on
+const cornerEditor = new CornerEditor($('cropStage'), (corners) => (pageCorners = corners));
 function updateSelectionPreview() {
   if (!canvas) return;
   const selected = preparePhoto(canvas, { mode: 'original', crop });
@@ -62,12 +68,72 @@ function lock(value) {
     $(id).disabled = value;
   for (const id of ['zoom', 'zoomIn', 'zoomOut', 'zoomFit', 'selectMode', 'panMode'])
     $(id).disabled = value;
-  editor.disabled = value;
+  // The crop editor waits while page corners are being placed.
+  editor.disabled = value || cornerEditor.shown;
+  cornerEditor.disabled = value;
+  $('straighten').disabled = value;
+  $('skipStraighten').disabled = value;
   $('text').readOnly = value;
   $('verified').disabled = value;
   count();
 }
+function hidePageCorners() {
+  cornerEditor.hide();
+  pageCorners = null;
+  $('pageActions').hidden = true;
+  editor.disabled = busy;
+}
+function offerCorners(corners) {
+  pageCorners = corners;
+  cornerEditor.show(corners, canvas.width, canvas.height);
+  editor.disabled = true;
+  $('pageActions').hidden = false;
+}
+// Finds the page in the current photo and offers its corners; never blocks scanning.
+async function detectPage() {
+  const token = ++pageRun;
+  try {
+    const found = await pageTools.detect(canvas);
+    if (token !== pageRun || busy) return;
+    if (!found) {
+      status(PAGE_NOT_FOUND);
+      return;
+    }
+    offerCorners(found);
+    status('Page edges found. Adjust the corners, then tap Straighten page or Skip.');
+  } catch (e) {
+    console.warn('Page detection failed', e);
+    if (token === pageRun && !busy) status(PAGE_NOT_FOUND);
+  }
+}
+$('straighten').onclick = async () => {
+  if (!canvas || busy || !pageCorners) return;
+  const source = canvas;
+  lock(true);
+  status('Straightening the page on your device…');
+  try {
+    canvas = await pageTools.straighten(source, pageCorners);
+    source.width = source.height = 1; // free the unstraightened photo now
+    resetResult();
+    showCanvas(); // resets the crop and recomputes the photo warnings
+    $('fileInfo').textContent =
+      `${canvas.width} × ${canvas.height} pixels · straightened page · image held in this tab only`;
+    status('Page straightened. Select a paragraph, then tap Transcribe selected section.');
+  } catch (e) {
+    console.warn('Straightening failed', e);
+    hidePageCorners();
+    status(PAGE_NOT_FOUND);
+  } finally {
+    lock(false);
+  }
+};
+$('skipStraighten').onclick = () => {
+  hidePageCorners();
+  status('Using the full photo. Select a paragraph, then tap Transcribe selected section.');
+};
 function showCanvas() {
+  ++pageRun; // a new or changed photo cancels any page detection still running
+  hidePageCorners();
   $('preview').src = canvas.toDataURL('image/jpeg', 0.9);
   $('empty').hidden = true;
   $('imageArea').hidden = false;
@@ -95,6 +161,7 @@ async function loadFile(file) {
   }
   lock(true);
   const url = URL.createObjectURL(file);
+  let loaded = false;
   try {
     const img = new Image();
     img.src = url;
@@ -119,12 +186,14 @@ async function loadFile(file) {
     $('fileInfo').textContent =
       `${canvas.width} × ${canvas.height} pixels · image held in this tab only`;
     status('Image ready. Check orientation, then extract text.');
+    loaded = true;
   } catch (e) {
     status('This image could not be opened. Try a JPG or PNG photo.', true);
   } finally {
     URL.revokeObjectURL(url);
     lock(false);
   }
+  if (loaded) detectPage();
 }
 $('camera').onclick = () => $('cameraInput').click();
 $('choose').onclick = $('replace').onclick = () => $('fileInput').click();
@@ -135,6 +204,8 @@ for (const id of ['cameraInput', 'fileInput'])
   };
 $('rotate').onclick = () => {
   if (!canvas) return;
+  // Corners being placed turn with the photo: (x, y) → (old height − y, x).
+  const turned = pageCorners && pageCorners.map((p) => ({ x: canvas.height - p.y, y: p.x }));
   const rotated = document.createElement('canvas');
   rotated.width = canvas.height;
   rotated.height = canvas.width;
@@ -145,6 +216,7 @@ $('rotate').onclick = () => {
   canvas = rotated;
   resetResult();
   showCanvas();
+  if (turned) offerCorners(turned);
   status('Image rotated. Extract again when ready.');
 };
 function resetCrop() {
@@ -330,6 +402,8 @@ $('download').onclick = () => {
 };
 $('clear').onclick = () => {
   ++run;
+  ++pageRun;
+  hidePageCorners();
   canvas = null;
   $('preview').removeAttribute('src');
   $('selectionPreview').removeAttribute('src');
@@ -376,7 +450,14 @@ $('demo').onclick = () => {
   showCanvas();
   $('fileInfo').textContent = 'Fictional sample generated on your device';
   status('Sample ready. Zoom, select a paragraph, then tap Transcribe selected section.');
+  detectPage();
 };
+// Start loading OpenCV once the page has painted, so start-up stays fast.
+addEventListener('load', () =>
+  requestAnimationFrame(() =>
+    setTimeout(() => pageTools.load().catch((e) => console.warn('OpenCV unavailable', e)), 0),
+  ),
+);
 let registration;
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker

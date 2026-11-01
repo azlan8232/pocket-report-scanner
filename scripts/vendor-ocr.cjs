@@ -1,6 +1,6 @@
 'use strict';
 // Copy pinned OCR dependencies into the published site. No runtime CDN requests.
-// Tesseract, paddleocr.js and ONNX Runtime Web come from node_modules. The PaddleOCR
+// Tesseract, paddleocr.js, ONNX Runtime Web and OpenCV.js come from node_modules. The PaddleOCR
 // models and the licence texts the npm packages leave out are downloaded from pinned
 // URLs, checked against sha256 and cached in .cache/vendor-ocr for later offline builds.
 const fs = require('node:fs');
@@ -34,6 +34,21 @@ for (const name of [
 }
 copy('@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz', 'lang/eng.traineddata.gz');
 copy('tesseract.js-core/LICENSE', 'LICENSE-core');
+
+// OpenCV.js 4.12.0 (page detection and straightening), Apache-2.0. The single file embeds its
+// WASM. Pinned by sha256 so an unexpected build is never published.
+const OPENCV_SHA256 = 'bd0c3e6448043de04f6a64a12cb7b759f78c3ab8f7c35c9f2e0f71c88bb17103';
+const opencv = fs.readFileSync(path.join(modules, '@techstark/opencv-js/dist/opencv.js'));
+if (crypto.createHash('sha256').update(opencv).digest('hex') !== OPENCV_SHA256)
+  throw new Error('sha256 mismatch for @techstark/opencv-js/dist/opencv.js');
+fs.writeFileSync(path.join(vendor, 'opencv.js'), opencv);
+fs.writeFileSync(
+  path.join(vendor, 'LICENSE-opencv.txt'),
+  'opencv.js is OpenCV 4.12.0 (https://opencv.org) compiled to JavaScript and WebAssembly,\n' +
+    'as published in @techstark/opencv-js 4.12.0-release.1. OpenCV 4.5.0 and later, and this\n' +
+    'package, are licensed under the Apache License 2.0, reproduced below.\n\n' +
+    fs.readFileSync(path.join(modules, '@techstark/opencv-js/LICENSE'), 'utf8'),
+);
 
 // PaddleOCR: paddleocr.js on single-threaded ONNX Runtime Web (WASM, no WebGPU).
 // paddleocr.mjs contains a port of Clipper2 offset code under BSL-1.0; its build strips

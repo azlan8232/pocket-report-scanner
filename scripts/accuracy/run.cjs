@@ -10,6 +10,7 @@ const { pathToFileURL } = require('node:url');
 const { composeText, createTesseractEngine } = require('../../dist/engine.js');
 const { createPaddleEngine } = require('../../dist/engine-paddle.js');
 const { preparePhoto } = require('../../dist/prepare.js');
+const { findPageCorners, straighten } = require('../../dist/page.js');
 const { cer, wer, numberAccuracy } = require('./metrics.cjs');
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -52,20 +53,50 @@ const ENGINES = {
 };
 
 // A variant entry: prepare(buffer) returns { image: Buffer, mode } to hand to the engine.
+const make = () => createCanvas(1, 1);
 const photoVariant = (options) => ({
   implemented: true,
   prepare: async (buffer) => {
     const source = await loadImage(buffer);
-    const canvas = preparePhoto(source, { mode: 'photo', ...options }, () => createCanvas(1, 1));
+    const canvas = preparePhoto(source, { mode: 'photo', ...options }, make);
     return { image: canvas.toBuffer('image/png'), mode: 'photo' };
   },
 });
+
+let openCv = null;
+function loadOpenCv() {
+  const cv = require('@techstark/opencv-js');
+  // Never await cv itself: it is a thenable that never settles.
+  return (openCv =
+    openCv ||
+    new Promise((resolve) => {
+      if (cv.Mat) resolve({ cv });
+      else cv.onRuntimeInitialized = () => resolve({ cv });
+    }));
+}
+
+// As in the app: find the page and straighten it (the full photo when no page is found),
+// then clean up with background normalisation.
+const straightVariant = {
+  implemented: true,
+  prepare: async (buffer) => {
+    const { cv } = await loadOpenCv();
+    const image = await loadImage(buffer);
+    let source = createCanvas(image.width, image.height);
+    source.getContext('2d').drawImage(image, 0, 0);
+    const corners = findPageCorners(cv, source, make);
+    if (corners) source = straighten(cv, source, corners, make);
+    const canvas = preparePhoto(source, { mode: 'photo', background: true }, make);
+    return { image: canvas.toBuffer('image/png'), mode: 'photo' };
+  },
+};
 const VARIANTS = {
   // preparePhoto in photo mode without shadow removal.
   raw: photoVariant({ background: false }),
   // The same with background normalisation (shadow removal) switched on.
   clean: photoVariant({ background: true }),
-  straight: { implemented: false },
+  // Page detection and perspective straightening, then the clean variant.
+  straight: straightVariant,
   suggest: { implemented: false },
 };
 
