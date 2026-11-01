@@ -368,7 +368,7 @@ let suggester = null, // null until the dictionaries have loaded
   settledText = '', // the text as it was when edits last settled
   editTimer;
 function updateLearnedCount() {
-  $('learnedCount').textContent = 'Learned words: ' + learned.size();
+  $('learnedCount').textContent = String(learned.size());
 }
 updateLearnedCount();
 async function loadSuggester() {
@@ -398,7 +398,9 @@ function ensureSuggester() {
 function kindLabel(item) {
   const kind = item.kind === 'suggest' ? 'word' : classifyToken(item.text);
   if (kind === 'laterality') return 'Check side';
-  return kind === 'word' || kind === 'other' ? 'Unclear word' : 'Check number';
+  if (kind === 'date') return 'Check date';
+  if (kind === 'unit') return 'Check unit';
+  return kind === 'number' ? 'Check number' : 'Unclear word';
 }
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -419,18 +421,23 @@ function selectItem(item) {
 function chooseSuggestion(item, replacement) {
   const next = applySuggestion($('text').value, item, replacement);
   if (next === null) return textChanged();
+  recordCorrection(item.text, replacement, next, item.start);
   $('text').value = next;
   settledText = next;
-  recordCorrection(item.text, replacement);
   $('verified').checked = false;
   count();
   rebuildCheck();
 }
 /* Only a word fixed to a word the dictionaries know is kept: a corrected name or other
    identifier must never be stored. */
-function recordCorrection(from, to) {
+const isTitleCase = (word) => word.length > 1 && /^\p{Lu}[^\p{Lu}]*$/u.test(word);
+const startsSentence = (text, index) => /(?:^|[.!?:\n])\s*$/.test(text.slice(0, index));
+/* `text` and `index` place the corrected word in the report. A Title Case word in mid-sentence
+   may be a surname that happens to be in the dictionary, so it is not kept. */
+function recordCorrection(from, to, text, index) {
   if (!suggester || classifyToken(from) !== 'word' || classifyToken(to) !== 'word') return;
   if (!suggester.isKnown(to)) return;
+  if (isTitleCase(to) && !startsSentence(text, index)) return;
   learned.record(from, to);
   updateLearnedCount();
 }
@@ -499,18 +506,26 @@ async function showCheckAfterExtraction(result) {
   } catch (_) {} // no word confidences: only numbers, sides and units are listed
   await ensureSuggester();
   if (id !== checkRun) return;
-  rebuildCheck(spans);
+  // Spans fit the extracted text only; if it was edited while loading, they would misplace.
+  rebuildCheck($('text').value === text ? spans : undefined);
 }
 /* A pause in typing: learn a single fixed word, then refresh the list. */
 function afterEdit() {
   const now = $('text').value;
   const fix = detectWordCorrection(settledText, now);
+  if (fix) {
+    // detectWordCorrection guarantees the same word count, so the first difference is it.
+    const before = settledText.split(/\s+/).filter(Boolean);
+    const tokens = [...now.matchAll(/\S+/g)];
+    const changed = tokens.findIndex((t, i) => t[0] !== before[i]);
+    recordCorrection(fix.from, fix.to, now, tokens[changed].index);
+  }
   settledText = now;
-  if (fix) recordCorrection(fix.from, fix.to);
   rebuildCheck();
 }
 $('learnedClear').onclick = () => {
   learned.clear();
+  $('learnedNotice').hidden = true;
   updateLearnedCount();
   rebuildCheck();
 };

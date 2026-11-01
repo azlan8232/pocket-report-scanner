@@ -342,7 +342,7 @@ async function main() {
     assert.equal(app.$('text').value, value.replace('haemorhage', 'haemorrhage'));
     assert.equal(app.$('verified').checked, false, 'review is unticked');
     assert.equal(app.$('copy').disabled, true);
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+    assert.equal(app.$('learnedCount').textContent, '1');
     assert.equal(
       rows(app).some((r) => r.text === 'haemorrhage'),
       false,
@@ -359,7 +359,7 @@ async function main() {
     assert.equal(JSON.parse(app.storage.get(STORE)).haemorhage.haemorrhage, 1);
     // Clear empties the store and the count.
     await app.click('learnedClear');
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(app.$('learnedCount').textContent, '0');
     assert.equal(app.storage.has(STORE), false);
   }
 
@@ -376,7 +376,7 @@ async function main() {
       .chips.map((c) => c.textContent);
     assert.equal(chips[0], 'infusion');
     assert.ok(chips.includes('effusion'));
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+    assert.equal(app.$('learnedCount').textContent, '1');
   }
 
   // A correction to a word the dictionaries do not know (a surname) is never stored.
@@ -385,14 +385,24 @@ async function main() {
     await scan(app, reportOf('Seen by Zxqvlorp today'));
     await type(app, 'Seen by Hartwellmoor today');
     assert.equal(app.storage.has(STORE), false, 'unknown target is not recorded');
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(app.$('learnedCount').textContent, '0');
     // A known word typed in as the fix is recorded (single word only).
     await type(app, 'Seen by Zxqvlorp today');
     await type(app, 'Seen by doctor today');
     assert.deepEqual(JSON.parse(app.storage.get(STORE)), { zxqvlorp: { doctor: 1 } });
+    // Title Case mid-sentence may be a surname, so it is not kept; at a sentence start it is.
+    await type(app, 'Seen by Zxqvlorp today');
+    await type(app, 'Seen by Doctor today');
+    assert.equal(app.$('learnedCount').textContent, '1', 'mid-sentence Title Case not recorded');
+    await type(app, 'Zxqvlorp seen today');
+    await type(app, 'Nurse seen today');
+    assert.equal(JSON.parse(app.storage.get(STORE)).zxqvlorp.nurse, 1, 'sentence start recorded');
+    await type(app, 'Done. Zxqvlorp seen today');
+    await type(app, 'Done. Patient seen today');
+    assert.equal(JSON.parse(app.storage.get(STORE)).zxqvlorp.patient, 1, 'after a full stop');
     // Changing two words at once is not a single-word correction.
     await type(app, 'Seen by nurse yesterday');
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 1');
+    assert.equal(app.$('learnedCount').textContent, '3');
   }
 
   // A stale list is refreshed instead of applying a chip to the wrong place.
@@ -404,12 +414,23 @@ async function main() {
     row.chips[0].onclick();
     assert.equal(app.$('text').value, 'XX No haemorhage seen', 'text untouched');
     assert.equal(app.$('status').textContent, 'Text changed; list refreshed');
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(app.$('learnedCount').textContent, '0');
     assert.equal(
       rows(app).find((r) => r.text === 'haemorhage').chips.length > 0,
       true,
       'list rebuilt',
     );
+  }
+
+  // Dates and units are labelled as such.
+  {
+    const app = startApp({ fetchDictionaries: true, compose: composeText });
+    await scan(app, reportOf('Date 30 October 2026 size 5 mm left'));
+    const kinds = Object.fromEntries(rows(app).map((r) => [r.text, r.kind]));
+    assert.equal(kinds.October, 'Check date');
+    assert.equal(kinds.mm, 'Check unit');
+    assert.equal(kinds['5'], 'Check number');
+    assert.equal(kinds.left, 'Check side');
   }
 
   // Keep dismisses an item for this report.
@@ -450,7 +471,10 @@ async function main() {
   {
     const app = startApp({ stored: '{bad', compose: composeText });
     assert.equal(app.$('learnedNotice').hidden, false);
-    assert.equal(app.$('learnedCount').textContent, 'Learned words: 0');
+    assert.equal(app.$('learnedCount').textContent, '0');
+    assert.equal(app.storage.has(STORE), false, 'the bad data is removed');
+    await app.click('learnedClear');
+    assert.equal(app.$('learnedNotice').hidden, true, 'Clear hides the notice');
     await scan(app, reportOf('Plain text'));
     assert.match(app.$('status').textContent, /^Extraction complete/);
   }

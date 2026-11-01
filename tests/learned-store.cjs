@@ -63,9 +63,11 @@ const memoryStorage = (initial) => {
 // Corrupt or unexpected data starts empty and says so once.
 for (const bad of ['{bad', '[1,2]', '"text"', '{"a":"b"}', '{"a":{"b":"x"}}']) {
   let resets = 0;
-  const store = createLearnedStore(memoryStorage(bad), undefined, undefined, () => resets++);
+  const storage = memoryStorage(bad);
+  const store = createLearnedStore(storage, undefined, undefined, () => resets++);
   assert.equal(store.size(), 0, bad);
   assert.equal(resets, 1, bad);
+  assert.equal(storage.getItem('pocket-ocr-learned-v1'), null, 'bad data removed');
   store.record('efusion', 'effusion');
   assert.deepEqual(store.lookup('efusion'), ['effusion'], 'usable after a reset');
   assert.equal(resets, 1);

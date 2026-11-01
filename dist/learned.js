@@ -69,6 +69,9 @@
       if (raw === null || raw === undefined) return new Map();
       const pairs = parse(raw);
       if (pairs) return pairs;
+      try {
+        storage.removeItem(key); // so the reset is reported once, not on every load
+      } catch (_) {}
       if (onReset) onReset();
       return new Map();
     }
