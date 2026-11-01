@@ -268,8 +268,10 @@ const HEADER = [
   'Number accuracy',
   'Seconds/page',
 ];
-const isRow = (line) => line.startsWith('| ') && !line.startsWith('| Engine');
 const rowCells = (line) => line.slice(2, -2).split(' | ');
+// A results row: a table line with one cell per HEADER column (summary tables have fewer).
+const isRow = (line) =>
+  line.startsWith('| ') && !line.startsWith('| Engine') && rowCells(line).length === HEADER.length;
 // Rows sort by engine, then variant (suggest@ thresholds last), then condition.
 const rank = (list, value) => {
   const i = list.indexOf(value);
@@ -284,8 +286,8 @@ const rowOrder = (a, b) =>
 // Writes the table. Rows of an earlier run for the same engine and variant are replaced and
 // the rest are kept, so a partial run (one variant) updates the report instead of erasing it.
 // An existing report keeps its heading and notes.
-function writeReport(table, versions, images) {
-  const old = fs.existsSync(REPORT_FILE) ? fs.readFileSync(REPORT_FILE, 'utf8').split(/\r?\n/) : [];
+function writeReport(table, versions, images, file = REPORT_FILE) {
+  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
   const first = old.findIndex(isRow);
   const last = old.length - 1 - [...old].reverse().findIndex(isRow);
   const replaced = new Set(table.map((c) => c[0] + '|' + c[1]));
@@ -313,7 +315,7 @@ function writeReport(table, versions, images) {
     ...merged.map((c) => '| ' + c.join(' | ') + ' |'),
     ...(first < 0 ? [''] : old.slice(last + 1)),
   ];
-  fs.writeFileSync(REPORT_FILE, lines.join('\n'));
+  fs.writeFileSync(file, lines.join('\n'));
 }
 
 if (require.main === module)
@@ -325,4 +327,4 @@ if (require.main === module)
     },
   );
 
-module.exports = { listImages };
+module.exports = { listImages, writeReport };
