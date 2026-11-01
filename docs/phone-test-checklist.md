@@ -10,6 +10,7 @@ For the owner, on an Android phone in Chrome, with the deployed site. Use the pr
    Expected: the app opens and extracts text with no network.
 4. **Camera photo of r01 to r05.** Take a photo of each printed page with Take a photo.
    Expected: text is close to the printed page. Note any misread words, and PaddleOCR seconds per page.
+   To score the photos on a computer, copy them to tests/fixtures/reports/phone/ named after their report, such as r01.jpg or r01-desk.jpg, then run `npm run accuracy -- --variant clean`; they appear as the "phone" condition in tests/accuracy-report.md.
 5. **Blur warning.** Take a few sharp, well-lit photos, then one deliberately blurred photo.
    Expected: no blur warning on the sharp ones, a warning on the blurred one. (The threshold, 87, was set from test photos, so report any false alarm.)
 6. **Straighten by touch.** Photograph a page on a desk so its edges are clear, then drag the corner handles with a finger and tap Straighten page.
@@ -25,7 +26,8 @@ For the owner, on an Android phone in Chrome, with the deployed site. Use the pr
 11. **Share.** Tap Share and send to WhatsApp.
     Expected: the share sheet opens with the text.
 12. **Older phone.** On a phone with little memory, extract a photo.
-    Expected: either PaddleOCR works, or you see "PaddleOCR could not run on this device, so Tesseract was used." and the text still appears.
+    Expected: either PaddleOCR works, or you see "PaddleOCR could not start or stopped responding, so Tesseract was used." and the text still appears.
+    Note: both workers (OCR and page detection) can be loaded at once, for example when a new photo is checked for page edges while text is being read, so this is the step most likely to run out of memory. Note any pause after the text appears.
 13. **Netlify file types.** On a computer, open the deployed site, DevTools, Network, reload, and check the Content-Type of the .mjs, .wasm and .onnx files.
     Expected: .mjs is JavaScript, .wasm is application/wasm, .onnx is a binary type (not text/html), and no request fails.
 14. **Reload after a deploy.** After the next deploy, open the installed app online, reload twice, then tap Prepare offline use again.

@@ -151,20 +151,24 @@ function select(registry, wanted, label) {
   return [wanted];
 }
 
-// Test images as { id, condition, file }. img/ files are rNN-<condition>.ext; phone/ files are rNN-anything.ext.
-function listImages(limit) {
+// Test images as { id, condition, file }. img/ files are rNN-<condition>.ext; phone/ files
+// are rNN.ext or rNN-anything.ext (.png, .jpg or .jpeg). Other images are counted and skipped.
+function listImages(limit, root = REPORTS, log = console.log) {
   const found = [];
-  for (const [dir, fixed] of [
-    ['img', null],
-    ['phone', 'phone'],
+  let skipped = 0;
+  for (const [dir, fixed, pattern] of [
+    ['img', null, /^(r\d\d)-(.+)\.(png|jpe?g)$/i],
+    ['phone', 'phone', /^(r\d\d)(-.+)?\.(png|jpe?g)$/i],
   ]) {
-    const full = path.join(REPORTS, dir);
+    const full = path.join(root, dir);
     if (!fs.existsSync(full)) continue;
     for (const f of fs.readdirSync(full).sort()) {
-      const m = /^(r\d\d)-(.+)\.(png|jpe?g)$/i.exec(f);
+      const m = pattern.exec(f);
       if (m) found.push({ id: m[1], condition: fixed || m[2], file: path.join(full, f) });
+      else if (/\.(png|jpe?g|webp|heic)$/i.test(f)) skipped++;
     }
   }
+  if (skipped) log(`Skipped ${skipped} images not named rNN-<condition> (img/) or rNN (phone/).`);
   const ids = [...new Set(found.map((i) => i.id))].sort().slice(0, limit);
   return found.filter((i) => ids.includes(i.id));
 }
@@ -312,10 +316,13 @@ function writeReport(table, versions, images) {
   fs.writeFileSync(REPORT_FILE, lines.join('\n'));
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error(err.message);
-    process.exit(1);
-  },
-);
+if (require.main === module)
+  main().then(
+    () => process.exit(0),
+    (err) => {
+      console.error(err.message);
+      process.exit(1);
+    },
+  );
+
+module.exports = { listImages };

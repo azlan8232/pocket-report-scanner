@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node scripts/vendor-ocr.cjs",
-    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs && node tests/page.cjs && node tests/app-page.cjs && node tests/engine.cjs && node tests/engine-fallback.cjs && node tests/engine-paddle.cjs && node tests/metrics.cjs && node tests/suggest.cjs && node tests/learned-store.cjs && node tests/output.cjs && node tests/offline-cache.cjs",
+    "test": "node tests/crop-editor.cjs && node tests/two-finger.cjs && node tests/prepare.cjs && node tests/page.cjs && node tests/app-page.cjs && node tests/engine.cjs && node tests/engine-fallback.cjs && node tests/engine-paddle.cjs && node tests/metrics.cjs && node tests/accuracy-images.cjs && node tests/suggest.cjs && node tests/learned-store.cjs && node tests/output.cjs && node tests/offline-cache.cjs",
     "format": "prettier --write dist/*.js tests/*.cjs scripts/*.cjs scripts/accuracy/*.cjs",
     "fixtures": "node scripts/accuracy/render-fixtures.cjs",
     "accuracy": "node scripts/accuracy/run.cjs"
