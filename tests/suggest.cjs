@@ -18,6 +18,12 @@ for (const [token, kind] of [
   ['T2-weighted', 'number'],
   ['x2', 'number'],
   ['(R)', 'laterality'],
+  // A lone L may be left or litre: it is checked as a side, never guessed either way.
+  ['L', 'laterality'],
+  ['(L)', 'laterality'],
+  ['l', 'laterality'],
+  ['R', 'laterality'],
+  ['mg/L', 'unit'],
   ['Left', 'laterality'],
   ['bilateral', 'laterality'],
   ['12/10/2026', 'date'],

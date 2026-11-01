@@ -54,10 +54,11 @@
     if (!core) return 'other';
     if (/^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/.test(core) && hasFourDigitGroup(core)) return 'date';
     const lower = core.toLowerCase();
+    // Before units: a lone L may be left or litre, so it is checked as a side.
+    if (LATERALITY.has(lower)) return 'laterality';
     if (isUnitCompound(lower)) return 'unit';
     if (/\p{N}/u.test(core)) return 'number';
     if (MONTHS.has(lower) || (CAPITAL_MONTHS.has(lower) && core !== lower)) return 'date';
-    if (LATERALITY.has(lower)) return 'laterality';
     if (
       lower
         .split(/[-'’]/)
