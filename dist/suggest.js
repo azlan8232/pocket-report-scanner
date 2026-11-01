@@ -4,7 +4,7 @@
 (function (root) {
   'use strict';
 
-  const { createSymSpell } =
+  const { createSymSpell, editDistance } =
     typeof require === 'function' && typeof module !== 'undefined'
       ? require('./symspell.js')
       : root;
@@ -16,6 +16,7 @@
   );
   // Short or ambiguous forms count as months only when written with a capital.
   const CAPITAL_MONTHS = new Set('may jan feb apr jun jul aug sep sept oct nov dec'.split(' '));
+  const LATERALITY_WORDS = ['left', 'right', 'bilateral'];
   const KEPT = /[\p{L}\p{N}%]/u;
   const MEDICAL_COUNT = 1000000;
   const MAX_SUGGESTIONS = 3;
@@ -33,16 +34,36 @@
     return core.split(/[/.-]/).some((part) => part.length === 4);
   }
 
+  /* Units joined by a slash or squared, such as mcg/mL, mg/kg or cm². */
+  function isUnitCompound(lower) {
+    return lower.split('/').every((part) => UNITS.has(part.replace(/[²³]+$/, '')));
+  }
+
+  /* A word within two edits of left, right or bilateral (Ieft, Rlght) may be one of them
+     misread, so it is only ever flagged, never guessed. */
+  function nearLaterality(word) {
+    return word
+      .toLowerCase()
+      .split(/[-'’]/)
+      .some((part) => LATERALITY_WORDS.some((w) => editDistance(part, w, 2) <= 2));
+  }
+
   function classifyToken(token) {
     const [start, end] = trimmedRange(token.trim());
     const core = token.trim().slice(start, end);
     if (!core) return 'other';
     if (/^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/.test(core) && hasFourDigitGroup(core)) return 'date';
-    if (/\d/.test(core)) return 'number';
     const lower = core.toLowerCase();
-    if (UNITS.has(lower)) return 'unit';
+    if (isUnitCompound(lower)) return 'unit';
+    if (/\p{N}/u.test(core)) return 'number';
     if (MONTHS.has(lower) || (CAPITAL_MONTHS.has(lower) && core !== lower)) return 'date';
     if (LATERALITY.has(lower)) return 'laterality';
+    if (
+      lower
+        .split(/[-'’]/)
+        .some((part) => LATERALITY_WORDS.includes(part) || part === 'lt' || part === 'rt')
+    )
+      return 'laterality';
     if (/^\p{L}+(?:[-'’]\p{L}+)*$/u.test(core)) return 'word';
     return 'other';
   }
@@ -103,11 +124,14 @@
       const own = (learned ? learned.lookup(lower) : []).map((t) => t.toLowerCase());
       const out = [];
       for (const term of [...own, ...ranked]) {
-        if (term === lower || out.includes(term) || classifyToken(term) !== 'word') continue;
-        out.push(term);
+        if (term === lower) continue;
+        // The filter runs on the case-transferred result: Mav must never become May.
+        const cased = transferCase(word, term);
+        if (out.includes(cased) || classifyToken(cased) !== 'word') continue;
+        out.push(cased);
         if (out.length === MAX_SUGGESTIONS) break;
       }
-      return out.map((term) => transferCase(word, term));
+      return out;
     }
 
     return { isKnown, suggest };
@@ -143,7 +167,7 @@
       } else if (kind === 'word') {
         const confidence = spans ? confidenceAt(spans, state, start, end) : null;
         if (suggester.isKnown(token) && (confidence === null || confidence >= threshold)) continue;
-        const suggestions = suggester.suggest(token);
+        const suggestions = nearLaterality(token) ? [] : suggester.suggest(token);
         items.push({
           start,
           end,

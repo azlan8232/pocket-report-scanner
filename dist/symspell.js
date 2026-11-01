@@ -84,7 +84,7 @@
     return { add, lookup, has };
   }
 
-  const api = { createSymSpell };
+  const api = { createSymSpell, editDistance };
   Object.assign(root, api);
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window === 'undefined' ? globalThis : window);

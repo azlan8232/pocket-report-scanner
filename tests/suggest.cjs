@@ -33,6 +33,14 @@ for (const [token, kind] of [
   ['effusion', 'word'],
   ['T-shaped', 'word'],
   ["patient's", 'word'],
+  ['½', 'number'],
+  ['cm²', 'unit'],
+  ['mcg/mL', 'unit'],
+  ['mg/kg', 'unit'],
+  ['left-sided', 'laterality'],
+  ['right-sided', 'laterality'],
+  ['mid-left', 'laterality'],
+  ['bilateral-', 'laterality'],
   ['&', 'other'],
   ['a/b', 'other'],
   ['', 'other'],
@@ -74,7 +82,7 @@ assert.equal(sym.lookup('effusion').filter((r) => r.term === 'effusion').length,
 
 // suggester
 const english =
-  'the 1000000\non 900000\nsmall 800000\ninfusion 50000\nright 700000\nrich 600000\nrice 500000';
+  'the 1000000\non 900000\nsmall 800000\ninfusion 50000\nright 700000\nrich 600000\nrice 500000\nrise 400000';
 const medical = 'haemorrhage 1000000\neffusion 1000000\nleft 1000000\n3cm 1000000';
 const none = { lookup: () => [] };
 const suggester = createSuggester({ english, medical, learned: none });
@@ -84,6 +92,10 @@ assert.equal(suggester.suggest('efusion')[0], 'effusion');
 assert.ok(suggester.isKnown('Effusion'));
 assert.ok(!suggester.isKnown('efusion'));
 assert.ok(suggester.suggest('efusion').length <= 3);
+// A candidate that would become a date once cased is dropped (Mav must not become May).
+const dated = createSuggester({ english: 'may 900000\nmat 800000', medical: '', learned: none });
+assert.ok(!dated.suggest('Mav').includes('May'));
+assert.ok(dated.suggest('Mav').includes('Mat'));
 // A word is never suggested to itself.
 assert.ok(!suggester.suggest('small').includes('small'));
 // Laterality words and numbers never come out as replacements.
@@ -136,7 +148,7 @@ assert.deepEqual(
 );
 assert.deepEqual(buildCheckList('Small on', { suggester }), []);
 assert.deepEqual(buildCheckList('Small on', { spans, threshold: 0.4, suggester }), []);
-const lowSuggest = buildCheckList('Small rich', {
+const lowSuggest = buildCheckList('Small rise', {
   spans: [
     { start: 0, end: 5, confidence: 0.99 },
     { start: 6, end: 10, confidence: 0.3 },
@@ -145,6 +157,22 @@ const lowSuggest = buildCheckList('Small rich', {
 });
 assert.equal(lowSuggest[0].kind, 'suggest');
 assert.deepEqual(lowSuggest[0].suggestions, ['rice']);
+
+// Misread laterality words are flagged with no suggestions.
+for (const misread of ['Ieft', 'Rlght', 'bilaterl'])
+  assert.deepEqual(
+    buildCheckList('Small ' + misread, { suggester }).map((i) => [i.text, i.kind, i.suggestions]),
+    [[misread, 'verify', []]],
+  );
+// Hyphenated laterality compounds, fractions and compound units are flagged too.
+assert.deepEqual(
+  buildCheckList('Small left-sided ½ mcg/mL', { suggester }).map((i) => [i.text, i.kind]),
+  [
+    ['left-sided', 'verify'],
+    ['½', 'verify'],
+    ['mcg/mL', 'verify'],
+  ],
+);
 
 // applySuggestion
 assert.equal(applySuggestion(text, items[0], 'effusion'), 'Small effusion 3.2 cm on left.');
