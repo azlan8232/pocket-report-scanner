@@ -47,6 +47,55 @@ assert(
 );
 assert(gray(flat, 200, 50) <= 60, 'text bars must stay dark');
 
+// Memory: intermediate canvases are released (0x0) once used, and the per-pixel steps never
+// run on more pixels than the output keeps. `tracked` records every canvas made and the
+// largest pixel buffer read or written through it.
+function tracked() {
+  const made = [];
+  let largest = 0;
+  const factory = () => {
+    const canvas = createCanvas(1, 1);
+    const ctx = canvas.getContext('2d');
+    for (const name of ['getImageData', 'createImageData']) {
+      const original = ctx[name].bind(ctx);
+      ctx[name] = (...args) => {
+        const data = original(...args);
+        largest = Math.max(largest, data.width * data.height);
+        return data;
+      };
+    }
+    made.push(canvas);
+    return canvas;
+  };
+  return { factory, made, largest: () => largest };
+}
+const released = (made, kept) =>
+  made.filter((c) => c !== kept).every((c) => c.width === 0 && c.height === 0);
+{
+  const t = tracked();
+  const flatAgain = normaliseBackground(shaded, t.factory);
+  assert(released(t.made, flatAgain), 'normaliseBackground must release its working canvases');
+}
+for (const options of [{}, { mode: 'document' }, { background: false }]) {
+  const t = tracked();
+  const result = preparePhoto(shaded, options, t.factory);
+  assert(released(t.made, result), 'preparePhoto must release its working canvases');
+}
+{
+  const big = createCanvas(4000, 4000); // 16MP, as loadFile allows
+  const bctx = big.getContext('2d');
+  bctx.fillStyle = 'white';
+  bctx.fillRect(0, 0, 4000, 4000);
+  const t = tracked();
+  const result = preparePhoto(big, {}, t.factory);
+  assert(result.width * result.height <= 12010000);
+  assert(
+    t.largest() <= result.width * result.height,
+    `pixel steps ran on ${t.largest()} pixels, more than the ${result.width * result.height} kept`,
+  );
+  assert(released(t.made, result), 'large input: working canvases must be released');
+}
+
 // Sharpness: a sharp render scores higher than a blurred copy.
 async function sharpnessCheck() {
   const sharp = await loadImage(path.join(__dirname, 'fixtures/reports/img/r01-good.png'));

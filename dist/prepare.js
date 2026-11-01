@@ -10,6 +10,10 @@
   // Fair photos read well (0.28% CER on PaddleOCR), so only poorer ones are warned about.
   const SHARPNESS_MIN = 87;
   const luma = (d, i) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  // Frees a working canvas's pixel buffer now instead of waiting for garbage collection.
+  const release = (...canvases) => {
+    for (const c of canvases) c.width = c.height = 0;
+  };
 
   // Divides out uneven lighting: each pixel becomes gray / background, where the background
   // is a heavily smoothed copy of the image. Text stays dark; shadowed paper becomes even.
@@ -30,6 +34,7 @@
     bctx.imageSmoothingEnabled = true;
     bctx.imageSmoothingQuality = 'high';
     bctx.drawImage(small, 0, 0, w, h);
+    release(small);
     const out = make();
     out.width = w;
     out.height = h;
@@ -39,6 +44,7 @@
     octx.drawImage(source, 0, 0);
     const src = octx.getImageData(0, 0, w, h).data,
       bg = bctx.getImageData(0, 0, w, h).data;
+    release(back);
     for (let i = 0; i < d.length; i += 4) {
       const v = Math.min(255, (luma(src, i) * 255) / Math.max(1, luma(bg, i)));
       d[i] = d[i + 1] = d[i + 2] = v;
@@ -102,20 +108,38 @@
     const input = make();
     input.width = w;
     input.height = h;
-    const ctx = input.getContext('2d');
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(source, x, y, w, h, 0, 0, w, h);
+    const ictx = input.getContext('2d');
+    ictx.fillStyle = 'white';
+    ictx.fillRect(0, 0, w, h);
+    ictx.drawImage(source, x, y, w, h, 0, 0, w, h);
     if (mode === 'original') return input;
-    if (background) ctx.drawImage(normaliseBackground(input, make), 0, 0);
-    // Luminance contrast: suppress grey paper without hard thresholding faint characters.
-    // Skipped after background normalisation, which already sets the white point; stretching
-    // again thickened blurred strokes (poor CER 45.7% -> 63.0% on PaddleOCR).
+    // Aim for legible glyph sizes, bounded by 12MP to limit phone memory use. A crop larger
+    // than that is shrunk first, so the pixel steps below never run on more than is kept.
+    const scale = Math.min(3, Math.max(1, 2400 / w), Math.sqrt(12000000 / (w * h)));
+    const page = scale < 1 ? resized(input, scale, make) : input;
+    if (page !== input) release(input);
+    const pw = page.width,
+      ph = page.height,
+      ctx = page.getContext('2d');
+    if (background) {
+      const flat = normaliseBackground(page, make);
+      ctx.drawImage(flat, 0, 0);
+      release(flat);
+    } else stretchContrast(ctx, pw, ph);
+    if (scale < 1) return page;
+    const out = resized(page, scale, make);
+    release(page);
+    return out;
+  }
+
+  // Luminance contrast: suppress grey paper without hard thresholding faint characters.
+  // Not used after background normalisation, which already sets the white point; stretching
+  // again thickened blurred strokes (poor CER 45.7% -> 63.0% on PaddleOCR).
+  function stretchContrast(ctx, w, h) {
     const pixels = ctx.getImageData(0, 0, w, h),
       d = pixels.data,
       hist = new Uint32Array(256);
-    for (let i = 0; i < d.length; i += 4)
-      hist[Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])]++;
+    for (let i = 0; i < d.length; i += 4) hist[Math.round(luma(d, i))]++;
     const total = w * h;
     let acc = 0,
       low = 0,
@@ -135,30 +159,25 @@
         break;
       }
     }
-    if (!background && high - low > 30) {
-      for (let i = 0; i < d.length; i += 4) {
-        const v = Math.max(
-          0,
-          Math.min(
-            255,
-            ((0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] - low) * 255) / (high - low),
-          ),
-        );
-        d[i] = d[i + 1] = d[i + 2] = v;
-      }
-      ctx.putImageData(pixels, 0, 0);
+    if (high - low <= 30) return;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.max(0, Math.min(255, ((luma(d, i) - low) * 255) / (high - low)));
+      d[i] = d[i + 1] = d[i + 2] = v;
     }
-    // Aim for legible glyph sizes, bounded by 12MP to limit phone memory use.
-    const scale = Math.min(3, Math.max(1, 2400 / w), Math.sqrt(12000000 / (w * h)));
+    ctx.putImageData(pixels, 0, 0);
+  }
+
+  // A smoothly scaled copy on a white background.
+  function resized(canvas, scale, make) {
     const out = make();
-    out.width = Math.max(1, Math.round(w * scale));
-    out.height = Math.max(1, Math.round(h * scale));
+    out.width = Math.max(1, Math.round(canvas.width * scale));
+    out.height = Math.max(1, Math.round(canvas.height * scale));
     const oc = out.getContext('2d');
     oc.fillStyle = 'white';
     oc.fillRect(0, 0, out.width, out.height);
     oc.imageSmoothingEnabled = true;
     oc.imageSmoothingQuality = 'high';
-    oc.drawImage(input, 0, 0, out.width, out.height);
+    oc.drawImage(canvas, 0, 0, out.width, out.height);
     return out;
   }
   root.preparePhoto = preparePhoto;
