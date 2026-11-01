@@ -53,8 +53,7 @@ function count() {
   const n = $('text').value.trim();
   $('wordCount').textContent = (n ? n.split(/\s+/).length : 0) + ' words';
   const ready = !!n && $('verified').checked && !busy;
-  $('copy').disabled = !ready;
-  $('download').disabled = !ready;
+  for (const id of ['copy', 'share', 'download']) $(id).disabled = !ready;
 }
 function lock(value) {
   busy = value;
@@ -588,14 +587,29 @@ $('text').oninput = () => {
   editTimer = setTimeout(afterEdit, 300);
 };
 $('verified').onchange = count;
+$('share').hidden = typeof navigator.share !== 'function';
 $('copy').onclick = async () => {
   try {
-    await navigator.clipboard.writeText($('text').value);
-    status('Reviewed text copied to your clipboard.');
+    const how = await copyReport($('text').value, navigator.clipboard, window.ClipboardItem);
+    status(
+      how === 'rich'
+        ? 'Reviewed text copied, with headings and paragraphs for Word and PowerPoint.'
+        : 'Reviewed text copied to your clipboard as plain text.',
+    );
   } catch (e) {
     $('text').focus();
     $('text').select();
     status('Clipboard access unavailable here. Text is selected: long-press it and choose Copy.');
+  }
+};
+$('share').onclick = async () => {
+  try {
+    const how = await shareReport($('text').value, navigator);
+    if (how === 'shared') status('Reviewed text sent to the share menu.');
+    else if (how === 'unavailable')
+      status('Sharing is not available here. Use Copy or Save .txt.', true);
+  } catch (e) {
+    status('Sharing was refused. Use Save .txt instead.', true);
   }
 };
 $('download').onclick = () => {

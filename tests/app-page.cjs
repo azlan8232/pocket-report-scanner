@@ -8,6 +8,7 @@ const vm = require('node:vm');
 const { createCanvas } = require('@napi-rs/canvas');
 const prepare = require('../dist/prepare.js');
 const suggest = require('../dist/suggest.js');
+const output = require('../dist/output.js');
 const { createLearnedStore } = require('../dist/learned.js');
 
 function deferred() {
@@ -57,7 +58,7 @@ function element(id) {
   };
 }
 
-function startApp({ stored = null, fetchDictionaries = false, compose } = {}) {
+function startApp({ stored = null, fetchDictionaries = false, compose, nav = {} } = {}) {
   const elements = new Map();
   const $ = (id) => elements.get(id) || elements.set(id, element(id)).get(id);
   const page = { detects: [], straightens: [] };
@@ -66,6 +67,7 @@ function startApp({ stored = null, fetchDictionaries = false, compose } = {}) {
   const storage = new Map(stored === null ? [] : [['pocket-ocr-learned-v1', stored]]);
   const context = {
     ...suggest,
+    ...output,
     createLearnedStore,
     fetch: async (url) => {
       if (!fetchDictionaries) throw new Error('offline');
@@ -79,7 +81,7 @@ function startApp({ stored = null, fetchDictionaries = false, compose } = {}) {
     Blob,
     Promise,
     location: { href: 'http://localhost/' },
-    navigator: {},
+    navigator: nav,
     localStorage: {
       getItem: (k) => (storage.has(k) ? storage.get(k) : null),
       setItem: (k, v) => storage.set(k, v),
@@ -487,6 +489,88 @@ async function main() {
     await app.click('clear');
     assert.equal(app.$('check').hidden, true);
     assert.equal(app.$('checkCount').textContent, '');
+  }
+
+  // Copy, Share and Save stay locked until the review tick; Share is hidden without Web Share.
+  {
+    const shared = [];
+    const app = startApp({ nav: { share: async (d) => shared.push(d) } });
+    assert.equal(app.$('share').hidden, false, 'Share is offered where Web Share exists');
+    await scan(app, reportOf('No acute abnormality.'));
+    for (const id of ['copy', 'share', 'download'])
+      assert.equal(app.$(id).disabled, true, id + ' needs the tick');
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    for (const id of ['copy', 'share', 'download'])
+      assert.equal(app.$(id).disabled, false, id + ' unlocks');
+    await app.click('share');
+    assert.deepEqual(shared, [{ title: 'Scanned report text', text: app.$('text').value }]);
+    assert.match(app.$('status').textContent, /share menu/);
+    // Editing re-locks all three.
+    await type(app, 'No acute abnormality today.');
+    assert.equal(app.$('verified').checked, false);
+    for (const id of ['copy', 'share', 'download'])
+      assert.equal(app.$(id).disabled, true, id + ' relocks after an edit');
+  }
+  {
+    const app = startApp();
+    assert.equal(app.$('share').hidden, true, 'Share is hidden without navigator.share');
+  }
+  // A refused share shows the error and leaves Save .txt available.
+  {
+    const app = startApp({
+      nav: {
+        share: async () => {
+          throw new Error('NotAllowedError');
+        },
+      },
+    });
+    await scan(app, reportOf('Plain text'));
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    await app.click('share');
+    assert.equal(app.$('status').classList.contains('error'), true);
+    assert.match(app.$('status').textContent, /Save \.txt/);
+    assert.equal(app.$('download').disabled, false);
+  }
+  // A cancelled share is not an error.
+  {
+    const app = startApp({
+      nav: {
+        share: async () => {
+          throw { name: 'AbortError' };
+        },
+      },
+    });
+    await scan(app, reportOf('Plain text'));
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    const before = app.$('status').textContent;
+    await app.click('share');
+    assert.equal(app.$('status').classList.contains('error'), false);
+    assert.equal(app.$('status').textContent, before);
+  }
+  // Copy writes rich text when the browser can, and falls back to selecting the text.
+  {
+    const written = [];
+    const nav = {
+      clipboard: { write: async (i) => written.push(...i), writeText: async () => {} },
+    };
+    const app = startApp({ nav });
+    app.ClipboardItem = undefined;
+    await scan(app, reportOf('FINDINGS: clear.'));
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    await app.click('copy');
+    assert.match(app.$('status').textContent, /plain text/, 'no ClipboardItem: plain fallback');
+  }
+  {
+    const app = startApp({ nav: {} });
+    await scan(app, reportOf('Plain text'));
+    app.$('verified').checked = true;
+    app.$('verified').onchange();
+    await app.click('copy');
+    assert.match(app.$('status').textContent, /Text is selected/);
   }
 
   console.log('app page-flow tests passed');

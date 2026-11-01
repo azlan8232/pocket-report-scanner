@@ -11,6 +11,7 @@ const assets = [
   'symspell.js',
   'suggest.js',
   'learned.js',
+  'output.js',
   'dict/medical-imaging.txt',
   'dict/en-30k.txt',
   'paddle-worker.js',
